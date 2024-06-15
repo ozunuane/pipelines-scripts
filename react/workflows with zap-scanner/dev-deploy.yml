@@ -1,0 +1,122 @@
+name: Build and Deploy to GKE
+
+on:
+  push:
+    branches:
+      - develop
+
+env:
+  PROJECT_ID: ${{ secrets.GKE_PROJECT }}
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER_DEMO }} # Add your cluster name here.
+  GKE_ZONE: ${{ secrets.GKE_ZONE }} # Add your cluster zone here.
+  DEPLOYMENT_NAME: afl-service-merchantbanking-webapp # Add your deployment name here.
+  IMAGE: afl/service-merchantbanking-webapp
+  IMAGE_TAG: $GITHUB_SHA
+  CONTEXT: ${{ secrets.GKE_CBA_CONTEXT }}
+
+jobs:
+  setup-build-publish-deploy:
+    name: Setup, Build, Publish, and Deploy
+    runs-on: ubuntu-latest
+    environment: development
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      # Setup gcloud CLI
+      - uses: google-github-actions/setup-gcloud@94337306dda8180d967a56932ceb4ddcf01edae7
+        with:
+          service_account_key: ${{ secrets.GKE_SA_KEY }}
+          project_id: ${{ secrets.GKE_PROJECT }}
+
+      # Configure Docker to use the gcloud command-line tool as a credential
+      # helper for authentication
+      - run: |-
+          gcloud --quiet auth configure-docker
+
+      # Get the GKE credentials so we can deploy to the cluster
+      - uses: google-github-actions/get-gke-credentials@fb08709ba27618c31c09e014e1d8364b02e5042e
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_ZONE }}
+          credentials: ${{ secrets.GKE_SA_KEY }}
+
+      - name: Add .env before build
+        env:
+            REACT_APP_META_MAP_CLIENT_ID: ${{ secrets.REACT_APP_META_MAP_CLIENT_ID }}
+            REACT_APP_META_MAP_VIDEO_FLOW_ID: ${{ secrets.REACT_APP_META_MAP_VIDEO_FLOW_ID }}
+            REACT_APP_META_MAP_DOCUMENT_ID: ${{ secrets.REACT_APP_META_MAP_DOCUMENT_ID }}
+            REACT_APP_FIREBASE_API_KEY: ${{ secrets.REACT_APP_FIREBASE_API_KEY }}
+            REACT_APP_FIREBASE_AUTH_DOMAIN: ${{ secrets.REACT_APP_FIREBASE_AUTH_DOMAIN }}
+            REACT_APP_FIREBASE_PROJECT_ID: ${{ secrets.REACT_APP_FIREBASE_PROJECT_ID }}
+            REACT_APP_FIREBASE_STORAGE_BUCKET: ${{ secrets.REACT_APP_FIREBASE_STORAGE_BUCKET }}
+            REACT_APP_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.REACT_APP_FIREBASE_MESSAGING_SENDER_ID }}
+            REACT_APP_FIREBASE_APP_ID: ${{ secrets.REACT_APP_FIREBASE_APP_ID }}
+            REACT_APP_FIREBASE_MEASUREMENT_ID: ${{ secrets.REACT_APP_FIREBASE_MEASUREMENT_ID }}
+            REACT_APP_FIREBASE_FIRESTORE_USER_PATH: test
+            REACT_APP_FIREBASE_FIRESTORE_ACCOUNT_PATH: test
+            REACT_APP_FIREBASE_FIRESTORE_BILLERS_LIST_PATH: test/payments/billerList
+            REACT_APP_FIREBASE_FIRESTORE_BANK_LIST_PATH: test/payments/bankList
+            REACT_APP_FIREBASE_FIRESTORE_PAYMENT_DEFAULT_PATH: test/payments/paymentsDefaults
+            REACT_APP_FIREBASE_FIRESTORE_BENEFICIARY_LIST_PATH: 9japay_users/test
+            REACT_APP_ITERABLE_API_KEY: ${{ secrets.REACT_APP_ITERABLE_API_KEY }}
+            REACT_APP_ITERABLE_JWT_SECRET: ${{ secrets.REACT_APP_ITERABLE_JWT_SECRET }}
+
+
+        run: |
+          touch .env
+          echo REACT_APP_MERCHANT_BANKING_API_BASE_URL="https://mag.test.9japay.com/v1" >> .env
+          echo REACT_APP_RETAIL_BANKING_API_BASE_URL="https://service-retail-gateway.test.9japay.com/v1" >> .env
+          echo REACT_APP_KYB_API_BASE_URL="https://kyb.test.9japay.com/v1" >> .env
+          echo REACT_APP_META_MAP_CLIENT_ID="$REACT_APP_META_MAP_CLIENT_ID" >> .env
+          echo REACT_APP_META_MAP_VIDEO_FLOW_ID="$REACT_APP_META_MAP_VIDEO_FLOW_ID" >> .env
+          echo REACT_APP_META_MAP_DOCUMENT_ID="$REACT_APP_META_MAP_DOCUMENT_ID" >> .env
+          echo REACT_APP_FIREBASE_API_KEY="$REACT_APP_FIREBASE_API_KEY" >> .env
+          echo REACT_APP_FIREBASE_AUTH_DOMAIN="$REACT_APP_FIREBASE_AUTH_DOMAIN" >> .env
+          echo REACT_APP_FIREBASE_PROJECT_ID="$REACT_APP_FIREBASE_PROJECT_ID" >> .env
+          echo REACT_APP_FIREBASE_STORAGE_BUCKET="$REACT_APP_FIREBASE_STORAGE_BUCKET" >> .env
+          echo REACT_APP_FIREBASE_MESSAGING_SENDER_ID="$REACT_APP_FIREBASE_MESSAGING_SENDER_ID" >> .env
+          echo REACT_APP_FIREBASE_APP_ID="$REACT_APP_FIREBASE_APP_ID" >> .env
+          echo REACT_APP_FIREBASE_MEASUREMENT_ID="$REACT_APP_FIREBASE_MEASUREMENT_ID" >> .env
+          echo REACT_APP_FIREBASE_FIRESTORE_USER_PATH="$REACT_APP_FIREBASE_FIRESTORE_USER_PATH" >> .env
+          echo REACT_APP_FIREBASE_FIRESTORE_ACCOUNT_PATH="$REACT_APP_FIREBASE_FIRESTORE_ACCOUNT_PATH" >> .env
+          echo REACT_APP_FIREBASE_FIRESTORE_BILLERS_LIST_PATH="$REACT_APP_FIREBASE_FIRESTORE_BILLERS_LIST_PATH" >> .env
+          echo REACT_APP_FIREBASE_FIRESTORE_BANK_LIST_PATH="$REACT_APP_FIREBASE_FIRESTORE_BANK_LIST_PATH" >> .env
+          echo REACT_APP_FIREBASE_FIRESTORE_PAYMENT_DEFAULT_PATH="$REACT_APP_FIREBASE_FIRESTORE_PAYMENT_DEFAULT_PATH" >> .env
+          echo REACT_APP_FIREBASE_FIRESTORE_BENEFICIARY_LIST_PATH="$REACT_APP_FIREBASE_FIRESTORE_BENEFICIARY_LIST_PATH" >> .env
+          echo REACT_APP_ITERABLE_API_KEY="$REACT_APP_ITERABLE_API_KEY" >> .env
+          echo REACT_APP_ITERABLE_JWT_SECRET="$REACT_APP_ITERABLE_JWT_SECRET" >> .env
+
+
+
+      # Build the Docker image
+      - name: Build
+        run: |-
+          docker build \
+            --tag "gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA" \
+            --build-arg GITHUB_SHA="$GITHUB_SHA" \
+            --build-arg GITHUB_REF="$GITHUB_REF" \
+            .
+
+      # Push the Docker image to Google Container Registry
+      - name: Publish
+        run: |-
+          docker push "gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA"
+
+      # Set up kustomize
+      - name: Set up Kustomize
+        run: |-
+          cd dev-deploy
+          curl -sfLo kustomize https://github.com/kubernetes-sigs/kustomize/releases/download/v3.1.0/kustomize_3.1.0_linux_amd64
+          chmod u+x ./kustomize
+
+      # Deploy the Docker image to the GKE cluster
+      - name: Deploy
+        run: |-
+          cd dev-deploy
+          kubectl config set-context $CONTEXT
+          ./kustomize edit set image gcr.io/PROJECT_ID/IMAGE=gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA
+          kubectl apply -k .
+          kubectl rollout status deployment/${{env.DEPLOYMENT_NAME}} --namespace cba
+          kubectl get services -o wide
