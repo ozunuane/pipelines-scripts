@@ -1,0 +1,183 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: noncba
+  labels:
+    name: noncba
+    istio-injection: enabled
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: afl-service-fraud-detection
+  namespace: noncba
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: afl-service-fraud-detection
+  template:
+    metadata:
+      labels:
+        app: afl-service-fraud-detection
+    spec:
+      containers:
+        - name: afl-service-fraud-detection
+          volumeMounts:
+            - name: service-account-credentials-volume
+              mountPath: /etc/gcp
+              readOnly: true
+          image: gcr.io/PROJECT_ID/IMAGE
+          ports:
+            - name: grpc
+              containerPort: 50052
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+            limits:
+              cpu: 100m
+
+          env:
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /etc/gcp/sa_credentials.json
+          envFrom:
+            - configMapRef:
+                name: fraud-detection-config
+            - secretRef:
+                name: fraud-detection-secret
+
+      volumes:
+        - name: service-account-credentials-volume
+          secret:
+            secretName: gcp-cred
+            items:
+              - key: sa_json
+                path: sa_credentials.json
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fraud-detection-config
+  namespace: noncba
+data:
+  NODE_ENV: production
+  APP_NAME: "Fraud detection service"
+  APP_HOME: 127.0.0.1
+  BRAND_NAME: "9JAPAY"
+  GRPC_SERVER: "localhost"
+  GRPC_SERVER_PORT: "50052"
+  PORT: "8080"
+  REGFYL_COMPANY_NAME: Amegy Microfinance Bank Limited
+  REGFYL_COMPANY_RC_NUMBER: "787934"
+  REGFYL_BASE_URL: https://api.portal.regfyl.com
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fraud-detection-secret
+  namespace: noncba
+type: Opaque
+data:
+  REGFYL_API_KEY: TWpJelgxOXBjMjl1YkhsZllWOWxlVEl3TWpNdE1USXRNRGdnTVRBNk1EZzZNRGhoYlRNNU5UWTM=
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: afl-service-fraud-detection
+  namespace: noncba
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+    - name: grpc
+      port: 50052
+      targetPort: 50052
+
+  type: ClusterIP
+  selector:
+    app: afl-service-fraud-detection
+
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: afl-service-fraud-detection-ilb
+  namespace: noncba
+  annotations:
+    cloud.google.com/load-balancer-type: "Internal"
+spec:
+  type: LoadBalancer
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: grpc
+      port: 50052
+      targetPort: 50052
+  selector:
+    app:
+      afl-service-fraud-detection
+
+      
+# ---
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: afl-service-fraud-detection-static
+#   namespace: cba
+# spec:
+#   ports:
+#     - port: 8080
+#       targetPort: 8080
+#   type: NodePort
+#   selector:
+#     app: afl-service-fraud-detection
+# ---
+# apiVersion: networking.gke.io/v1
+# kind: ManagedCertificate
+# metadata:
+#   name: afl-service-fraud-detection-cert
+#   namespace: cba
+# spec:
+#   domains:
+#     - service-fraud-detection.test.inafl.com
+# ---
+# apiVersion: networking.k8s.io/v1beta1
+# kind: Ingress
+# metadata:
+#   name: afl-service-fraud-detection-ingress
+#   namespace: cba
+#   annotations:
+#     kubernetes.io/ingress.global-static-ip-name: afl-service-fraud-detection
+#     networking.gke.io/managed-certificates: afl-service-fraud-detection-cert
+#     kubernetes.io/ingress.allow-http: "false"
+#     networking.gke.io/v1beta1.FrontendConfig: fraud-detection-http-to-https
+# # a bonus, disablles http on the load balancer
+# spec:
+#   rules:
+#     - host: service-fraud-detection.test.inafl.com
+#       http:
+#         paths:
+#           - path: /*
+#             backend:
+#               serviceName: afl-service-fraud-detection-static
+#               servicePort: 8080
+
+# ---
+# apiVersion: networking.gke.io/v1beta1
+# kind: FrontendConfig
+# metadata:
+#   name: fraud-detection-http-to-https
+#   namespace: cba
+# spec:
+#   redirectToHttps:
+#     enabled: true

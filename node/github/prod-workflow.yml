@@ -1,0 +1,186 @@
+name: Build and Deploy to prod
+
+on:
+  pull_request:
+    branches:
+      - master
+    types: [closed]
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROD_PROJECT }}
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER_NONCBA_PROD }}   # Add your cluster name here.
+  GKE_ZONE: ${{ secrets.GKE_PROD_ZONE }}   # Add your cluster zone here.
+  DEPLOYMENT_NAME: afl-service-commandcenter-base-v2 # Add your deployment name here.
+  IMAGE: afl/service-commandcenter-base-v2
+  IMAGE_TAG: $GITHUB_SHA
+  CONTEXT: --current
+  SQL_CONNECTION: ${{ secrets.GCP_SQL_CLOUD_CONNECTION_NONCBA_PROD }}
+
+  
+
+jobs:
+  migrate_database:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1
+        with:
+          node-version: 14
+      - name: npm install dependencies
+        run: |
+          npm install
+      - id: "auth"
+        uses: "google-github-actions/auth@v0"
+        with:
+          credentials_json: "${{ secrets.GCP_PROD_SA_KEY }}"
+
+      - name: "Set up Cloud SDK"
+        uses: "google-github-actions/setup-gcloud@v0"
+        with:
+          service_account_key: ${{ secrets.GCP_PROD_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_PROD }}
+
+      - name: Get Cloud SQL Proxy
+        run: |
+          wget https://dl.google.com/cloudsql/cloud_sql_proxy.linux.amd64 -O cloud_sql_proxy
+          chmod +x cloud_sql_proxy
+      # - name: Backup development database
+      #   run: |
+      #     gcloud sql backups create --instance=${{ secrets.GC_SQL_CLOUD_INSTANCE_NAME_NONCB }}
+
+      - name: Get Runner Public IP
+        id: ip
+        uses: haythem/public-ip@v1.3
+
+      - name: Add Runner IP to CloudSQL Authorized Networks
+        run: |
+          echo ${{ steps.ip.outputs.ipv4 }}
+          echo ${{ steps.ip.outputs.ipv6 }}
+          gcloud sql instances patch ${{ secrets.GCP_SQL_CLOUD_INSTANCE_NAME_NONCBA_PROD }} --assign-ip
+          gcloud sql instances patch ${{ secrets.GCP_SQL_CLOUD_INSTANCE_NAME_NONCBA_PROD }} --authorized-networks=${{ steps.ip.outputs.ipv4 }}
+      - name: Generate .env file
+        env:
+          DB_CLIENT: postgres
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_USER: ${{ secrets.DB_USER_PROD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD_PROD }}
+          BRAND_NAME: 9jaPay
+          PORT: 8080
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GCP_PROD_SA_KEY }}
+          NODE_ENV: production
+        run: |
+          touch .env
+          echo NODE_ENV="$NODE_ENV" >> .env
+          echo DB_CLIENT="$DB_CLIENT" >> .env
+          echo HOST="$DB_HOST" >> .env
+          echo DB_PORT="$DB_PORT" >> .env
+          echo DB_USER="$DB_USER" >> .env
+          echo DB_NAME="$DB_NAME" >> .env
+          echo DB_PASSWORD="$DB_PASSWORD" >> .env
+          echo $GOOGLE_APPLICATION_CREDENTIALS >> cred.json
+          ls ${{ github.workspace }}
+        shell: bash
+
+      - name: Run Migration
+        run: |
+          ./cloud_sql_proxy -dir=/cloudsql -credential_file=cred.json  -instances=$SQL_CONNECTION=tcp:5432 & sleep 5 && npm run db:migrate
+
+
+      # - name: Run Seed 
+      #   run: |
+      #      npm run db:seed
+
+      - name: Clear Authorized Networks and Remove Public IP
+        run: |
+          gcloud sql instances patch ${{ secrets.GCP_SQL_CLOUD_INSTANCE_NAME_NONCBA_PROD }} --clear-authorized-networks
+          gcloud sql instances patch ${{ secrets.GCP_SQL_CLOUD_INSTANCE_NAME_NONCBA_PROD }} --no-assign-ip
+      
+
+    
+
+
+  setup-build-publish-deploy:
+    if: github.event.pull_request.merged == true
+    name: Setup, Build, Publish, and Deploy
+    needs: migrate_database
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    # Setup gcloud CLI
+    - uses: google-github-actions/setup-gcloud@94337306dda8180d967a56932ceb4ddcf01edae7
+      with:
+        service_account_key: ${{ secrets.GCP_PROD_SA_KEY }}
+        project_id: ${{ secrets.GCP_PROJECT_PROD }}
+
+    # Configure Docker to use the gcloud command-line tool as a credential
+    # helper for authentication
+    - run: |-
+        gcloud --quiet auth configure-docker
+    #Get the GKE credentials so we can deploy to the cluster
+    - uses: google-github-actions/get-gke-credentials@fb08709ba27618c31c09e014e1d8364b02e5042e
+      with:
+        cluster_name: ${{ env.GKE_CLUSTER }}
+        location: ${{ env.GKE_ZONE }}
+        credentials: ${{ secrets.GCP_PROD_SA_KEY }}
+        
+        
+
+    # Build the Docker image
+    - name: Checkout submodules
+      run: git submodule update --init --recursive
+    - name: Build
+      run: |-
+        docker build \
+          --tag "gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA" \
+          --build-arg GITHUB_SHA="$GITHUB_SHA" \
+          --build-arg GITHUB_REF="$GITHUB_REF" \
+          .
+    # Push the Docker image to Google Container Registry
+    - name: Publish
+      run: |-
+        docker push "gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA"
+    # Set up kustomize
+    - name: Set up Kustomize
+      run: |-
+        cd prod-deploy
+        curl -sfLo kustomize https://github.com/kubernetes-sigs/kustomize/releases/download/v3.1.0/kustomize_3.1.0_linux_amd64
+        chmod u+x ./kustomize
+    # Deploy the Docker image to the GKE cluster
+    - name: Deploy
+      run: |-
+        cd prod-deploy
+        echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+        curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
+        sudo apt update
+        sudo apt-get install google-cloud-sdk-gke-gcloud-auth-plugin
+        echo "##vso[task.setvariable variable=USE_GKE_GCLOUD_AUTH_PLUGIN]True"
+        export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+        sudo apt-get update && sudo apt-get --only-upgrade install kubectl google-cloud-sdk-skaffold google-cloud-sdk-gke-gcloud-auth-plugin google-cloud-sdk-kpt google-cloud-sdk-app-engine-go google-cloud-sdk-datalab google-cloud-sdk-nomos google-cloud-sdk-kubectl-oidc google-cloud-sdk-anthos-auth google-cloud-sdk-minikube google-cloud-sdk-app-engine-grpc google-cloud-sdk-terraform-tools google-cloud-sdk-config-connector google-cloud-sdk-log-streaming google-cloud-sdk-firestore-emulator google-cloud-sdk-app-engine-java google-cloud-sdk-cbt google-cloud-sdk-harbourbridge google-cloud-sdk-local-extract google-cloud-sdk-cloud-build-local google-cloud-sdk-cloud-run-proxy google-cloud-sdk-spanner-emulator google-cloud-sdk-app-engine-python-extras google-cloud-sdk-bigtable-emulator google-cloud-sdk google-cloud-sdk-pubsub-emulator google-cloud-sdk-datastore-emulator google-cloud-sdk-app-engine-python google-cloud-sdk-package-go-module
+        source ~/.bashrc
+        gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE --project $PROJECT_ID
+        gcloud compute ssh naijapay-bastion --project $PROJECT_ID --zone=europe-west2-a --  -L 8888:localhost:8888 -N -q -f
+        export HTTPS_PROXY=localhost:8888
+        ./kustomize edit set image gcr.io/PROJECT_ID/IMAGE=gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA
+        kubectl apply -k .
+        kubectl rollout status deployment/${{env.DEPLOYMENT_NAME}} --namespace commandcenter
+        kubectl get services -o wide
+    - name: Notify Slack
+      uses: ravsamhq/notify-slack-action@v1
+      if: always()
+      with:
+        status: ${{ job.status }}
+        notification_title: '{workflow} has {status_message}'
+        message_format: '{emoji} *{workflow}* {status_message} in <{repo_url}|{repo}>'
+        footer: 'Linked Repo <{repo_url}|{repo}>'
+        notify_when: 'failure'
+        mention_users: 'U039PLHFBN3'
+        mention_users_when: 'failure,warnings'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.NONCBA_SLACK_CHANNEL_ALERT }}
