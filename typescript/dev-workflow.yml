@@ -1,0 +1,138 @@
+name: Build and Deploy to GKE
+
+on:
+  pull_request:
+    branches:
+      - develop
+    types: [closed]
+
+env:
+  PROJECT_ID: ${{ secrets.GKE_PROJECT }}
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER_DEMO }} # Add your cluster name here.
+  GKE_ZONE: ${{ secrets.GKE_ZONE }} # Add your cluster zone here.
+  DEPLOYMENT_NAME: afl-service-bet9ja # Add your deployment name here.
+  IMAGE: afl/service-bet9ja
+  IMAGE_TAG: $GITHUB_SHA
+  CONTEXT: ${{ secrets.GKE_CBA_CONTEXT }}
+  SQL_CONNECTION: ${{ secrets.GC_SQL_CLOUD_CONNECTION_NAME }}
+
+jobs:
+  migrate_database:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1
+        with:
+          node-version: 14
+      - name: npm install dependencies
+        run: |
+          npm install
+      - id: 'auth'
+        uses: 'google-github-actions/auth@v0'
+        with:
+         credentials_json: '${{ secrets.GKE_SA_KEY }}'
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v0'
+        with:
+          project_id: ${{ secrets.GKE_PROJECT }}
+
+      - name: Get Cloud SQL Proxy
+        run: |
+          wget https://dl.google.com/cloudsql/cloud_sql_proxy.linux.amd64 -O cloud_sql_proxy
+          chmod +x cloud_sql_proxy
+
+      - name: Backup development database
+        run: |
+          gcloud sql backups create --instance=${{ secrets.GC_SQL_CLOUD_INSTANCE_NAME_NONCB }}
+
+      - name: Generate .env file
+        env:
+          DB_CLIENT: postgres
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASS }}
+          APP_NAME: 9jaPay Transaction Limit
+          PORT: 8080
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GKE_SA_KEY }}
+        run: |
+          touch .env
+          echo DB_CLIENT="$DB_CLIENT" >> .env
+          echo DB_HOST="$DB_HOST" >> .env
+          echo DB_PORT="$DB_PORT" >> .env
+          echo DB_USERNAME="$DB_USER" >> .env
+          echo DB_DATABASE="$DB_NAME" >> .env
+          echo DB_PASSWORD = "$DB_PASSWORD" >> .env
+          echo APP_NAME="$APP_NAME" >> .env
+          echo PORT="$PORT" >> .env
+          echo $GOOGLE_APPLICATION_CREDENTIALS >> cred.json
+          ls
+          echo GOOGLE_APPLICATION_CREDENTIALS= cred.json
+          ls ${{ github.workspace }}
+        shell: bash
+
+      - name: Run Migration
+        run: |
+          ./cloud_sql_proxy -dir=/cloudsql -credential_file=cred.json  -instances=inspired-victor-344313:europe-west2:noncba=tcp:5432 & npm run db:migrate
+
+
+  setup-build-publish-deploy:
+    if: github.event.pull_request.merged == true
+    name: Setup, Build, Publish, and Deploy
+    runs-on: ubuntu-latest
+    environment: development
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      # Setup gcloud CLI
+      - uses: google-github-actions/setup-gcloud@94337306dda8180d967a56932ceb4ddcf01edae7
+        with:
+          service_account_key: ${{ secrets.GKE_SA_KEY }}
+          project_id: ${{ secrets.GKE_PROJECT }}
+
+      # Configure Docker to use the gcloud command-line tool as a credential
+      # helper for authentication
+      - run: |-
+          gcloud --quiet auth configure-docker
+
+      # Get the GKE credentials so we can deploy to the cluster
+      - uses: google-github-actions/get-gke-credentials@fb08709ba27618c31c09e014e1d8364b02e5042e
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_ZONE }}
+          credentials: ${{ secrets.GKE_SA_KEY }}
+
+      # Build the Docker image
+      - name: Build
+        run: |-
+          docker build \
+            --tag "gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA" \
+            --build-arg GITHUB_SHA="$GITHUB_SHA" \
+            --build-arg GITHUB_REF="$GITHUB_REF" \
+            .
+
+      # Push the Docker image to Google Container Registry
+      - name: Publish
+        run: |-
+          docker push "gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA"
+
+      # Set up kustomize
+      - name: Set up Kustomize
+        run: |-
+          cd dev-deploy
+          curl -sfLo kustomize https://github.com/kubernetes-sigs/kustomize/releases/download/v3.1.0/kustomize_3.1.0_linux_amd64
+          chmod u+x ./kustomize
+
+      # Deploy the Docker image to the GKE cluster
+      - name: Deploy
+        run: |-
+          cd dev-deploy
+          kubectl config set-context $CONTEXT
+          ./kustomize edit set image gcr.io/PROJECT_ID/IMAGE=gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA
+          kubectl apply -k .
+          kubectl rollout status deployment/${{env.DEPLOYMENT_NAME}} --namespace cba
+          kubectl get services -o wide

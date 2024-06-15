@@ -1,0 +1,257 @@
+# apiVersion: v1
+# kind: Namespace
+# metadata:
+#   name: cba
+#   labels:
+#     name: cba
+#     istio-injection: enabled
+# ---
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: afl-service-bet9ja
+#   namespace: cba
+# spec:
+#   replicas: 2
+#   selector:
+#     matchLabels:
+#       app: afl-service-bet9ja
+#   template:
+#     metadata:
+#       labels:
+#         app: afl-service-bet9ja
+#     spec:
+#       containers:
+#         - name: afl-service-bet9ja
+#           volumeMounts:
+#             - name: service-account-credentials-volume
+#               mountPath: /etc/gcp
+#               readOnly: true
+#           image: gcr.io/PROJECT_ID/IMAGE
+#           ports:
+#             - containerPort: 8080
+#           resources:
+#             requests:
+#               cpu: 100m
+#             limits:
+#               cpu: 100m
+#           env:
+#             - name: GOOGLE_APPLICATION_CREDENTIALS
+#               value: /etc/gcp/sa_credentials.json
+#           envFrom:
+#             - configMapRef:
+#                 name: bet9ja-config
+#             - secretRef:
+#                 name: bet9ja-secret
+#       nodeSelector:
+#         cloud.google.com/gke-nodepool: dedicated-nodepool
+#       volumes:
+#         - name: service-account-credentials-volume
+#           secret:
+#             secretName: gcp-cred
+#             items:
+#               - key: sa_json
+#                 path: sa_credentials.json
+# ---
+# apiVersion: v1
+# kind: ConfigMap
+# metadata:
+#   name: bet9ja-config
+#   namespace: cba
+# data:
+#   DB_CLIENT: postgres
+#   DB_HOST: 172.17.144.6
+#   DB_DATABASE: afl-bet9ja
+#   DB_PORT: "5432"
+#   APP_NAME: 9jaPay Bet9ja Service
+#   APP_HOME: 127.0.0.1
+#   BRAND_NAME: AFL-9jaPay
+#   PORT: "8080"
+#   BANK_CODE: "090629"
+#   REDIS_HOST: redis-19703.c19336.eu-west2-1.gcp.cloud.rlrcp.com
+#   REDIS_PORT: "19703"
+#   TRANSFER_SERVICE_HOST: http://34.105.216.141:8080
+#   TRANSACTION_LIMIT_SERVICE_HOST: http://34.142.74.60
+#   PUBSUB_SECRET: 51254e260a7859ab7a73e04c9b2729121924935b6650bb23
+#   BET9JA_URL: https://stg-api-pay.bet9ja.com
+#   BET9JA_9JAPAY_ACCOUNTID: "2799"
+#   BET9JA_9JAPAY_USERNAME: 9j4P41T35t
+#   BET9JA_9JAPAY_PASSWORD: T35t9j4P41P4s5
+#   BET9JA_9JAPAY_TIMESTAMP: "20220608061010"
+#   BET9JA_9JAPAY_API_SECRET_KEY: cZtjW5aHN_2C
+#   BET9JA_9JAPAY_CURRENCY: NGN
+#   BET9JA_GL_CODE: "20107"
+#   BET9JA_ACCOUNT_NAME: "KC Gaming Networks Limited"
+#   BET9JA_COUPON_BASE_URL: https://stg-apirest.bet9ja.com
+#   BET9JA_COUPON_API_ACCOUNT_NAME: 9jaPayTestAccount
+#   BET9JA_COUPON_API_PASSWORD: G2c5QtX4yg
+#   NAME_ENQUIRY_SERVICE_URL: http://34.142.103.225/v1
+#   TRANFER_SERVICE_URL: http://34.105.216.141:8080/v1
+#   BET9JA_TRANSFER_PROCESSED_PUBSUB_TOPIC: bet9ja-transfer-processed
+#   GOOGLE_PUBSUB_SECRET: 51254e260a7859ab7a73e04c9b2729121924935b6650bb23
+#   ETRANZACT_SERVICE_URL: http://34.142.56.59:3000/api/v1
+#   BET9JA_INTEGRATOR_ID: 0b7f31ef-f25b-40fd-b1a8-e7d8c8d51090
+#   BET9JA_INTEGRATOR_APIKEY: 8d6b7e7507ec47e0bfacfeb8bbe0162f
+#   BET9JA_SERVICE_TYPE: BET9JA_TRANSFER
+#   BET9JA_NARRATION: BET9JA WITHDRAWAL
+#   POSTING_BASE_URL: http://35.246.93.217/api/v1
+#   POSTING_TRANSACTION_BASE_URL: http://35.230.142.49/api/v1
+#   POSTING_END_POINT: /Postings/Post
+#   POSTING_REVERSAL_END_POINT: /Postings/Reverse
+#   BRANCH_ID: f4d47dfc-1b41-4a51-9411-1d356d11339e
+#   PRODUCT_NAME: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+#   DEBIT_ENTRY_CODE: D235
+#   CREDIT_ENTRY_CODE: C235
+#   INTERNAL_BANK_NAME: "Amegy MFB (9jaPay)"
+#   MAX_REVERSAL_RETRY_COUNT: "5"
+#   TRANSFER_CHARGE_IN_KOBO: "1000"
+#   GOOGLE_STORAGE_BUCKET_NAME: qr_payments
+#   REDIRECT_URL: https://qr.9japay.com
+#   MINIMUM_AMOUNT: "10000"
+#   SERVICE_IPADDRESS: "34.105.242.20"
+#   ENCRYPTION_KEY: "MjJqbnF5Y3Q3OGJwaWVobDJhZjA0MW5za3Iyc2Y5dWc="
+#   ACCOUNTING_MS_BASE_URL: http://35.246.115.178:80/api/v1
+#   MERCHANT_MANAGEMENT_BASE_URL: http://34.105.223.84/v1/accounts
+#   ACCOUNT_LINK_REDIRECT_URL: http://34.147.206.227
+#   DASHBOARD_REDIRECT_URL: http://34.142.102.157
+#   DEPOSIT_CAPPED_CHARGE_AMOUNT_IN_KOBO: "100000"
+#   DEPOSIT_TRANSACTION_CHARGE_IN_PERCENT: "0.5"
+#   BET9JA_CHARGE_INCOME_GL_CODE: "40208"
+
+# ---
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: bet9ja-secret
+#   namespace: cba
+# type: Opaque
+# data:
+#   DB_USERNAME: bm9uY2JhdXNlcg==
+#   DB_PASSWORD: PHtgQGNzWyoyTFJefC0meg==
+#   REDIS_USERNAME: ZGVmYXVsdA==
+#   REDIS_PASSWORD: b1NoMThJUTZVc1VFdjM5amVUd3QyZlpBRFFiY2RZSnU=
+
+# ---
+
+# ---
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: gcp-cred
+#   namespace: cba
+# type: Opaque
+# data:
+#   sa_json: ewogICJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsCiAgInByb2plY3RfaWQiOiAiaW5zcGlyZWQtdmljdG9yLTM0NDMxMyIsCiAgInByaXZhdGVfa2V5X2lkIjogIjRkMzY0Nzc5MThjZGIwNDEyN2UzNWU5OWEzMmJiMDQyMTUxZTQzNGIiLAogICJwcml2YXRlX2tleSI6ICItLS0tLUJFR0lOIFBSSVZBVEUgS0VZLS0tLS1cbk1JSUV2QUlCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktZd2dnU2lBZ0VBQW9JQkFRREIrS2RsUzJKbUdHQTdcbkErNXJFK2NqV1Z4dlRWRUZ4N3psRzNRMzVwaXRneXJVTVpqcXRhM2VOZ3ZhWVl0cHR1R0tBRjB3dXVWdHp1dzRcbjJqT1FZVGFZczF3TEh3R1p3U0xQODlDdUpUYUZtbjBDQmtmL2RqYWxZMC94bTlyVGh0MXJ4M1JsNzRMSW5QWEdcbjh5KzBjU20wNnJiNzRsb1hlaDNYcFNWU252WGdRUlJDSVZwRXJ0UGladm1BbHpCVUVjRWRiTktnR1JYcmtpanpcbldwYTBqNVlyV1U4VlJqN2xoQ2JJNFFPNFRpdzVxU1Z3MVpzZnJGMmJ4SG8xYXlTa0xaL01QaklFUDNYWE81cTRcbm9ET1BpV2VteDVIanJpNklFc1ArcXFSY2krY2ZUQXMyQktKaDIzVDUwVFp4ZmhHUW9XRnJkYVdKbkpJTTM3ZUtcbmNaVk9DdGhUQWdNQkFBRUNnZ0VBQVRpTDhTN0d5VWE1QUZZWGY1UUovZVozbHZuQkcweTFDeW9ma3FTQWJJTXBcblYxbVNrVk9nYXdnakRmWlVOcytnWHNwK3k2bzVmSFh6ZGE0bDZmQTZ0RDVZdzNjbi91eEF5RmRNQm5TVWdjWEZcbnFLZ2FkdWlyRW1Kc0krU3J2VzRaWWE3Sk5FVU1LVEFYdWU5WTZ3VlZVbDZ4MVNjSkV5SEJJMVRXUmMxYlZkU0Fcbk9reGRPaFlqb2N1Wnp3b2dWeGhUcGZyaGpDV0R5bXJjOEJRcWQ3MjgzZjI4Wk9CalZ6Qi9yZzFGanRxbm4xem1cbkpLMTE0OFpWWWs1Q3ZBNnowRlBscldLYnhnSUpXWmRmMkE3SURzMFBuS0lVUTlRbVZPZnZvM2RuYVMrQjdSUXZcbno2cHg2bnZNRGZXRW85OVkwenJOeERDeG9XdWRIcWlEdmJCLzJ4YVM2UUtCZ1FEa1dQSGhtalRQNUY3K3FhTkRcbi9zWThmWUcwcU9ySk13MW0rTVQ0LzVTS2JPUm1sTEttU0pBTVNFUC8yb0RHeEJZcXF0elZ4YWNYaE5oMWFaWjZcbmR1Q0d2SDZCczVxeXlwSVg5SXdpbjZWR1AxK2Erd0hhTXIvdFV4b0ZuQnlGM0ZGUzg0S2NJbWl5S3hpS2I5MFFcbmxwVzliVWtTSm0rQml4OGVXNFVyZFZtOFNRS0JnUURaZGdHSDVzSXVPL0tCSFI4aFFmUGNqM1JCQXo1NWNrdHhcbkJwODA0ZGpZWnVNakZHcUFYSUtkRzh0K0REYzVZcUhlekd4NDN3Q0ZUaERyZHRqSFU2WFhhWTh1Mkt5Ymo4ZjFcbjdqT2xOZklsOENHV3hhbHY2bW5GK1d5emZJZURwdE93bC80WVNpMDZ2RjVQNmczTUxYbk05T1BFQ0xucXlwY1VcbmpxaHQwM1hYdXdLQmdHVzFkRytmWnh5ZVJPMjdrNXdxdEJPbmQ0bUhuNlJrbC9pZ24rT2t1MzM0eUxja1RucWdcbllZRUhBenJJRVluM04wUmovSjgvUFpETlBEajRBZTJrVzVmSUI3VXYwWjBIZTVFdC9PbERJTE9zY0tJd1lYL1dcbkVRVGRlZjY3clR5MmlJYWhMakRyWnFUTmEwM21TNW9pNkttS0x2emxuODhjcjR5dkNSNzFVelg1QW9HQVZwNjdcbncxOTJyNlh2VmVDOHVxbWpzcEp0MDB1d2dmMjE4VUthL2h5TUhMNzI4TTA4RXY5R2c4QkRrV1RhUm9CMFMrUVBcbnZTSE8ra3A3VU4rWlArU2c1YXBGZjNxTlhyV3FCOXNuTlVMRXZybmxGMEtLMkdwK1VYNmwvdVMyc2drc3YyWDdcbnI3ODBQdll6ZHcrYkNWNS82dFVOT05QbEFwSktGY1V4Yi9YUU5lc0NnWUFjUDdVT01KcGtROTkwSWhYQVpmVVRcbllSRXFlSk5SYzhUaVdTclN4bkZXbytCWEp4N1pSSktEYm96ZjhxUVhJVklicU5UQUZ1NFNGVzhxdEpnZXFZM2NcbnRCVVpMWEN0bVNLVjdTb3pJQ0VoZFNBeC9EelJuNkxYanRzSUo5THZpU2JlUDdGSG11RThEMGEvVk40dDFEYlVcbnRBaFZaOW5iY3UrSVZpNUcwZHFkQlE9PVxuLS0tLS1FTkQgUFJJVkFURSBLRVktLS0tLVxuIiwKICAiY2xpZW50X2VtYWlsIjogImdpdGh1YmFjdGlvbnNAaW5zcGlyZWQtdmljdG9yLTM0NDMxMy5pYW0uZ3NlcnZpY2VhY2NvdW50LmNvbSIsCiAgImNsaWVudF9pZCI6ICIxMTA1MjI3MzIzODc5Mzc4NDM0NzkiLAogICJhdXRoX3VyaSI6ICJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20vby9vYXV0aDIvYXV0aCIsCiAgInRva2VuX3VyaSI6ICJodHRwczovL29hdXRoMi5nb29nbGVhcGlzLmNvbS90b2tlbiIsCiAgImF1dGhfcHJvdmlkZXJfeDUwOV9jZXJ0X3VybCI6ICJodHRwczovL3d3dy5nb29nbGVhcGlzLmNvbS9vYXV0aDIvdjEvY2VydHMiLAogICJjbGllbnRfeDUwOV9jZXJ0X3VybCI6ICJodHRwczovL3d3dy5nb29nbGVhcGlzLmNvbS9yb2JvdC92MS9tZXRhZGF0YS94NTA5L2dpdGh1YmFjdGlvbnMlNDBpbnNwaXJlZC12aWN0b3ItMzQ0MzEzLmlhbS5nc2VydmljZWFjY291bnQuY29tIgp9Cg==
+# ---
+
+# ---
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: afl-service-bet9ja
+#   namespace: cba
+# spec:
+#   ports:
+#     - name: http
+#       port: 80
+#       targetPort: 8080
+#   type: LoadBalancer
+#   selector:
+#     app: afl-service-bet9ja
+
+# ---
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: afl-service-bet9ja-static
+#   namespace: cba
+# spec:
+#   ports:
+#     - port: 8080
+#       targetPort: 8080
+#   type: NodePort
+#   selector:
+#     app: afl-service-bet9ja
+
+# ---
+# apiVersion: networking.gke.io/v1
+# kind: ManagedCertificate
+# metadata:
+#   name: afl-service-bet9ja-cert
+#   namespace: cba
+# spec:
+#   domains:
+#     - service-bet9ja.test.inafl.com
+# ---
+# # apiVersion: networking.k8s.io/v1beta1
+# # kind: Ingress
+# # metadata:
+# #   name: afl-service-bet9ja-ingress
+# #   namespace: cba
+# #   annotations:
+# #     kubernetes.io/ingress.global-static-ip-name: afl-service-bet9ja
+# #     networking.gke.io/managed-certificates: afl-service-bet9ja-cert
+# #     kubernetes.io/ingress.allow-http: "false"
+# # # a bonus, disablles http on the load balancer
+# # spec:
+# #   rules:
+# #     - host: service-bet9ja.test.inafl.com
+# #       http:
+# #         paths:
+# #           - path: /*
+# #             backend:
+# #               serviceName: afl-service-bet9ja-static
+# #               servicePort: 8080
+# # ---
+# # apiVersion: networking.istio.io/v1alpha3
+# # kind: Gateway
+# # metadata:
+# #   name: afl-service-bet9ja-gateway
+# #   namespace: noncba
+# # spec:
+# #   selector:
+# #     istio: ingressgateway # use istio default controller
+# #   servers:
+# #   - port:
+# #       number: 8080
+# #       name: http
+# #       protocol: HTTP
+# #     hosts:
+# #     - "*"
+
+# # ---
+# # apiVersion: networking.istio.io/v1alpha3
+# # kind: VirtualService
+# # metadata:
+# #   name: afl-service-bet9ja
+# #   namespace: noncba
+# # spec:
+# #   hosts:
+# #   - "*"
+# #   gateways:
+# #   - afl-service-bet9ja-gateway
+# #   http:
+# #   - match:
+# #     route:
+# #     - destination:
+# #         port:
+# #           number: 8080
+# #         host: afl-service-bet9ja
+# # ---
+# # apiVersion: networking.istio.io/v1alpha3
+# # kind: VirtualService
+# # metadata:
+# #   name: afl-service-bet9ja
+# #   namespace: cba
+# # spec:
+# #   hosts:
+# #   - bet9ja.afl.com
+# #   gateways:
+# #   - afl-cba-customerinfo-gateway
+# #   http:
+# #   - match:
+# #     route:
+# #     - destination:
+# #         port:
+# #           number: 80
+# #         host: afl-service-bet9ja

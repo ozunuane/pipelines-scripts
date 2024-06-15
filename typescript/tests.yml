@@ -1,0 +1,81 @@
+name: Snyk Test, Unit Tests for Bet9ja
+on: push
+jobs:
+  synkscan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+      - uses: actions/setup-node@v1
+        with:
+          node-version: 16
+      - name: npm install dependencies
+        run: |
+          yarn install
+      - name: Run Snyk to check for vulnerabilities
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1
+        with:
+          node-version: 16
+      - name: npm install dependencies
+        run: |
+          npm install
+      - id: "auth"
+        uses: "google-github-actions/auth@v0"
+        with:
+          credentials_json: "${{ secrets.GKE_SA_KEY }}"
+      - name: "Set up Cloud SDK"
+        uses: "google-github-actions/setup-gcloud@v0"
+        with:
+          project_id: ${{ secrets.GKE_PROJECT }}
+
+      - name: Get Cloud SQL Proxy
+        run: |
+          wget https://dl.google.com/cloudsql/cloud_sql_proxy.linux.amd64 -O cloud_sql_proxy
+          chmod +x cloud_sql_proxy
+
+      - name: Generate .env file
+        env:
+          DB_CLIENT: postgres
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GKE_SA_KEY }}
+        run: |
+          touch .env
+          echo DB_CLIENT="$DB_CLIENT" >> .env
+          echo DB_HOST="$DB_HOST" >> .env
+          echo DB_PORT="$DB_PORT" >> .env
+          echo DB_USERNAME="$DB_USER" >> .env
+          echo DB_DATABASE="$DB_NAME" >> .env
+          echo DB_PASSWORD="$DB_PASSWORD" >> .env
+          echo $GOOGLE_APPLICATION_CREDENTIALS >> cred.json
+          ls
+          ls ${{ github.workspace }}
+        shell: bash
+
+      - name: Run Tests
+        run: |
+          ./cloud_sql_proxy -dir=/cloudsql -credential_file=cred.json  -instances=inspired-victor-344313:europe-west2:noncba=tcp:5432 & sleep 5 & npm run test
+
+      # - name: Notify Slack
+      #   uses: ravsamhq/notify-slack-action@v1
+      #   if: always()
+      #   with:
+      #     status: ${{ job.status }}
+      #     notification_title: '{workflow} has {status_message}'
+      #     message_format: '{emoji} *{workflow}* {status_message} in <{repo_url}|{repo}>'
+      #     footer: 'Linked Repo <{repo_url}|{repo}>'
+      #     notify_when: 'failure'
+      #     mention_users: 'U039PLHFBN3'
+      #     mention_users_when: 'failure,warnings'
+      #   env:
+      #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
