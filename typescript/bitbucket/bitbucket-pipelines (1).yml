@@ -1,0 +1,145 @@
+#pipeline start
+options:
+  docker: true
+
+definitions:
+  services:
+
+
+    sonar-scan: &sonarqube-scan
+      name: CI - Sonar Scan
+      image: tstrohmeier/awscli:3.8.3     
+      script:
+        - wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-4.5.0.2216-linux.zip
+        - export REPO_NAME=$BITBUCKET_REPO_SLUG
+        - unzip sonar-scanner-cli-4.5.0.2216-linux.zip
+        - export PATH=$PWD/sonar-scanner-4.5.0.2216-linux/bin:$PATH
+        - sonar-scanner 
+          -Dsonar.projectKey=$REPO_NAME
+          -Dsonar.host.url=$SONAR_HOST_URL 
+          -Dsonar.login=$SONAR_LOGIN2
+          -Dsonar.qualitygate.wait=true
+          -Dsonar.qualitygate.projectStatus=ERROR || { echo "Quality Gate failed"; exit 1; }          
+        - echo "Sonar Scan Complete ->> See https://$SONAR_HOST_URLdashboard?id=$REPO_NAME"
+
+
+
+    build-image: &build-image
+      name: CI - Git submodule update & docker build 
+      image: tstrohmeier/awscli:3.8.3
+      oidc: true
+      caches:
+        - docker
+      services:
+        - docker
+      script:
+        - export COMMIT_HASH=$(echo $BITBUCKET_COMMIT | cut -c 1-7)
+        - export BUILD_ID=$BITBUCKET_BRANCH-$COMMIT_HASH
+        - git submodule update --init --recursive
+        - cd ./proto && git checkout dev && git pull && cd ..
+        - aws sts assume-role-with-web-identity --role-arn $AWS_ROLE_ARN --role-session-name build-session  --web-identity-token "$BITBUCKET_STEP_OIDC_TOKEN" --duration-seconds 1000
+        - echo $BITBUCKET_STEP_OIDC_TOKEN
+        - export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token
+        - echo $BITBUCKET_STEP_OIDC_TOKEN > $(pwd)/web-identity-token
+        - cat $(pwd)/web-identity-token
+        - export ECR_REPO_NAME=bank-tranfer
+        - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 646245671754.dkr.ecr.us-east-1.amazonaws.com
+        - aws ecr describe-repositories --region ${REGION} --repository-names ${ECR_REPO_NAME} || aws ecr create-repository --region ${REGION} --repository-name ${ECR_REPO_NAME} --image-scanning-configuration scanOnPush=true
+        - docker build -t ${ECR_REPO_NAME} .
+       
+
+    push-image: &push-image
+      name: CI - Git submodule update & docker build & push image
+      image: tstrohmeier/awscli:3.8.3
+      oidc: true
+      caches:
+        - docker
+      services:
+        - docker
+      script:
+        - export COMMIT_HASH=$(echo $BITBUCKET_COMMIT | cut -c 1-7)
+        - export BRANCH_NAME=$BITBUCKET_BRANCH
+        - export BUILD_ID=$BITBUCKET_BRANCH-$COMMIT_HASH
+        - git submodule update --init --recursive
+        - cd ./proto && git checkout dev && git pull && cd ..
+        - aws sts assume-role-with-web-identity --role-arn $AWS_ROLE_ARN --role-session-name build-session  --web-identity-token "$BITBUCKET_STEP_OIDC_TOKEN" --duration-seconds 1000
+        - echo $BITBUCKET_STEP_OIDC_TOKEN
+        - export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token
+        - echo $BITBUCKET_STEP_OIDC_TOKEN > $(pwd)/web-identity-token
+        - cat $(pwd)/web-identity-token
+        - export ECR_REPO_NAME=bank-transfer
+        - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 646245671754.dkr.ecr.us-east-1.amazonaws.com
+        - aws ecr describe-repositories --region ${REGION} --repository-names ${ECR_REPO_NAME} || aws ecr create-repository --region ${REGION} --repository-name ${ECR_REPO_NAME} --image-scanning-configuration scanOnPush=true
+        - docker build -t ${ECR_REPO_NAME} .
+        - docker tag ${ECR_REPO_NAME}:latest 646245671754.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO_NAME}:${BUILD_ID}
+        - docker tag ${ECR_REPO_NAME}:latest 646245671754.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO_NAME}:${BRANCH_NAME}
+        - docker push 646245671754.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO_NAME}:${BUILD_ID}
+        - docker push 646245671754.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO_NAME}:${BRANCH_NAME}
+
+    deploy-to-ecs: &deploy-to-ecs
+      name: CD - ECS Deploy
+      image: tstrohmeier/awscli:3.8.3
+      oidc: true
+      services:
+        - docker
+      script:
+        - export CLUSTER_NAME="staging-cluster"
+        - export COMMIT_HASH=$(echo $BITBUCKET_COMMIT | cut -c 1-7)
+        - export SERVICE_NAME="bank-transfer-staging"
+        - export BUILD_ID=$BITBUCKET_BRANCH-$COMMIT_HASH
+        - export ECR_REPO_NAME=bank-transfer
+        - aws sts assume-role-with-web-identity --role-arn $AWS_ROLE_ARN --role-session-name build-session  --web-identity-token "$BITBUCKET_STEP_OIDC_TOKEN" --duration-seconds 1000
+        - echo $BITBUCKET_STEP_OIDC_TOKEN
+        - export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token
+        - echo $BITBUCKET_STEP_OIDC_TOKEN > $(pwd)/web-identity-token
+        - export NEW_IMAGE=646245671754.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO_NAME}:${BUILD_ID}
+        - export TASK_DEFINITION_NAME="bank-transfer-staging"
+        - export TASK_DEFINITION=$(aws ecs describe-task-definition --task-definition $TASK_DEFINITION_NAME --region "$REGION")
+        - export NEW_TASK_DEFINITION=$(echo $TASK_DEFINITION | jq --arg IMAGE "$NEW_IMAGE" '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
+        - export NEW_REVISION=$(aws ecs register-task-definition --region "$REGION" --cli-input-json "$NEW_TASK_DEFINITION")
+        - pip install ecs-deploy
+        - ecs deploy $CLUSTER_NAME $SERVICE_NAME --region $REGION --timeout 660 --no-deregister --rollback --task $TASK_DEFINITION_NAME
+        - echo "done"
+    
+    deploy-to-ecs: &deploy-to-main
+      name: CD - ECS Deploy
+      image: tstrohmeier/awscli:3.8.3
+      oidc: true
+      services:
+        - docker
+      script:
+        - export REPO_NAME=$BITBUCKET_BRANCH
+        - export CLUSTER_NAME="moni-production"
+        - export COMMIT_HASH=$(echo $BITBUCKET_COMMIT | cut -c 1-7)
+        - export SERVICE_NAME="bank-transfer-production"
+        - export BUILD_ID=$BITBUCKET_BRANCH-$COMMIT_HASH
+        - export ECR_REPO_NAME=bank-transfer
+        - aws sts assume-role-with-web-identity --role-arn $AWS_ROLE_ARN --role-session-name build-session  --web-identity-token "$BITBUCKET_STEP_OIDC_TOKEN" --duration-seconds 1000
+        - echo $BITBUCKET_STEP_OIDC_TOKEN
+        - export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token
+        - echo $BITBUCKET_STEP_OIDC_TOKEN > $(pwd)/web-identity-token
+        - export NEW_IMAGE=646245671754.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO_NAME}:${REPO_NAME}
+        - export TASK_DEFINITION_NAME="bank-transfer-production"
+        - export TASK_DEFINITION=$(aws ecs describe-task-definition --task-definition $TASK_DEFINITION_NAME --region "$REGION")
+        - export NEW_TASK_DEFINITION=$(echo $TASK_DEFINITION | jq --arg IMAGE "$NEW_IMAGE" '.taskDefinition | .containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
+        - export NEW_REVISION=$(aws ecs register-task-definition --region "$REGION" --cli-input-json "$NEW_TASK_DEFINITION")
+        - pip install ecs-deploy
+        - ecs deploy $CLUSTER_NAME $SERVICE_NAME --region $REGION --timeout 660 --no-deregister --rollback --task $TASK_DEFINITION_NAME
+        - echo "done"
+
+pipelines:
+  branches:
+    tool-pipeline:
+      - step: *push-image
+      
+    dev:
+      - step: *push-image
+
+    staging:
+      - step: *push-image
+      - step: *deploy-to-ecs
+
+
+    main:
+      - step: *push-image
+      - step: *deploy-to-main

@@ -1,0 +1,146 @@
+#pipeline start
+options:
+  docker: true
+
+definitions:
+  scripts:
+    script: &commonExportsAndAuth
+            export COMMIT_HASH=$(echo $BITBUCKET_COMMIT | cut -c 1-7);
+            export REPO_NAME=$BITBUCKET_BRANCH
+            export BUILD_ID=$BITBUCKET_BRANCH-$COMMIT_HASH;
+            export ECR_REPO_NAME=moni-$APP_NAME;
+            aws sts assume-role-with-web-identity --role-arn $AWS_ROLE_ARN --role-session-name build-session  --web-identity-token "$BITBUCKET_STEP_OIDC_TOKEN" --duration-seconds 1000;
+            echo $BITBUCKET_STEP_OIDC_TOKEN;
+            export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token;
+            echo $BITBUCKET_STEP_OIDC_TOKEN > $(pwd)/web-identity-token;
+            cat $(pwd)/web-identity-token
+
+
+    sonar-scan: &sonarqube
+      name: CI - Sonar Scan
+      image: node:14
+      oidc: true
+      services:
+        - docker
+      script: 
+        - npm install
+        - npm run build
+        # - npm run test   
+        - apt-get update && apt-get install -y curl unzip 
+        - curl --create-dirs -sSLo ~/.sonarscanner/sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION.zip
+        - unzip ~/.sonarscanner/sonar-scanner.zip -d ~/.sonarscanner/
+        - export PATH=$PATH:~/.sonarscanner/sonar-scanner-$SONAR_SCANNER_VERSION/bin
+        - export REPO_NAME=$BITBUCKET_REPO_SLUG
+        - sonar-scanner 
+          -Dsonar.projectKey=$REPO_NAME  
+          -Dsonar.host.url=$SONAR_HOST_URL 
+          -Dsonar.login=$SONAR_LOGIN
+          -Dsonar.language=ts
+          -Dsonar.sources=src 
+          -Dsonar.tests=test 
+          -Dsonar.typescript.lcov.reportPaths=coverage/lcov.info 
+          -Dsonar.qualitygate.wait=true
+          -Dsonar.qualitygate.projectStatus=ERROR || { echo "Quality Gate failed"; exit 1; }
+        - echo "Sonar Scan Complete ->> See https://$SONAR_HOST_URLdashboard?id=$REPO_NAME"
+
+        
+    build-image: &build-image
+      name: CI - Git submodule update & docker build 
+      image: tstrohmeier/awscli:3.8.3
+      oidc: true
+      services:
+        - docker
+      script:
+        - git submodule update --init --recursive
+        - cd ./proto && git checkout dev && git pull && cd ..
+        - *commonExportsAndAuth
+        - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 646245671754.dkr.ecr.us-east-1.amazonaws.com
+        - aws ecr describe-repositories --region ${REGION} --repository-names ${ECR_REPO_NAME} || aws ecr create-repository --region ${REGION} --repository-name ${ECR_REPO_NAME} --image-scanning-configuration scanOnPush=true
+        - docker build -t ${ECR_REPO_NAME} .
+ 
+
+
+    push-image: &push-image
+      name: CI - Git submodule update & docker build & push image
+      image: tstrohmeier/awscli:3.8.3
+      oidc: true
+      services:
+        - docker
+      script:
+        - git submodule update --init --recursive
+        - cd ./proto && git checkout dev && git pull && cd ..
+        - *commonExportsAndAuth
+        - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 646245671754.dkr.ecr.us-east-1.amazonaws.com
+        - aws ecr describe-repositories --region ${REGION} --repository-names ${ECR_REPO_NAME} || aws ecr create-repository --region ${REGION} --repository-name ${ECR_REPO_NAME} --image-scanning-configuration scanOnPush=true
+        - docker build -t ${ECR_REPO_NAME} .
+        - docker tag ${ECR_REPO_NAME}:latest 646245671754.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO_NAME}:${BUILD_ID}
+        - docker tag ${ECR_REPO_NAME}:latest 646245671754.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO_NAME}:${REPO_NAME}
+        - docker push 646245671754.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO_NAME}:${BUILD_ID}
+        - docker push 646245671754.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO_NAME}:${REPO_NAME}
+
+    deploy-to-staging: &deploy-to-staging
+      name: CD - ECS Deploy STAGING-ENV
+      image: tstrohmeier/awscli:3.8.3
+      oidc: true
+      services:
+        - docker
+      script:
+        - export CLUSTER_NAME="staging-cluster"
+        - export SERVICE_NAME="gateway-user-service-staging"
+        - *commonExportsAndAuth
+        - pip install ecs-deploy
+        - ecs deploy $CLUSTER_NAME $SERVICE_NAME -t $BUILD_ID --region $REGION --timeout 900 --no-deregister --rollback
+        - echo "done"
+
+    deploy-to-preprod: &deploy-to--preprod
+      name: CD - ECS Deploy PRE-PROD
+      image: tstrohmeier/awscli:3.8.3
+      oidc: true
+      services:
+        - docker
+      script:
+        - export CLUSTER_NAME="moni-pre-prod"
+        - export SERVICE_NAME="preprod-gateway-user-service"
+        - *commonExportsAndAuth
+        - pip install ecs-deploy
+        - ecs deploy $CLUSTER_NAME $SERVICE_NAME -t $BUILD_ID --region $REGION --timeout 900 --no-deregister --rollback
+        - echo "done"
+
+    deploy-to-prod: &deploy-to-prod
+      name: CD - ECS Deploy PROD
+      image: tstrohmeier/awscli:3.8.3
+      oidc: true
+      services:
+        - docker
+      script:
+        - export CLUSTER_NAME="moni-production"
+        - export SERVICE_NAME="gateway-user-service-production"
+        - *commonExportsAndAuth
+        - pip install ecs-deploy
+        - ecs deploy $CLUSTER_NAME $SERVICE_NAME -t $BUILD_ID --region $REGION --timeout 900 --no-deregister --rollback
+        - echo "done"
+
+
+
+
+pipelines:
+  branches:
+    tool-pipeline:
+      - step: *push-image
+
+    sonarqube:
+      - step: *sonarqube
+    dev:
+      - step: *sonarqube 
+      - step: *build-image
+    staging:
+      - step: *push-image
+      - step: *deploy-to-staging   
+    main:
+      - step: *push-image
+      - step: *deploy-to-preprod   
+
+  custom: 
+    main:
+     - step: *push-image
+     - step: *deploy-to-prod

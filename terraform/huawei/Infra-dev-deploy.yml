@@ -1,0 +1,163 @@
+name: 'TF HUAWEI INFRA DEV ENVIRONMENT'
+
+on:
+  push:
+    branches:
+      - '*'
+
+env:
+  PROJECT_ID: ${{ secrets.GKE_PROJECT }}
+  GCP_SA_KEY: ${{ secrets.GKE_SA_KEY}}
+  HW_ACCESS_KEY: ${{ secrets.HW_ACCESS_KEY }}
+  HW_SECRET_KEY: ${{ secrets.HW_SECRET_KEY }}
+  HW_REGION_NAME: ${{ secrets.HW_REGION_NAME }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.HW_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.HW_SECRET_KEY }}
+  HUAWEI_BASTION_PRIVATE_KEY_DEV:  ${{ secrets.HUAWEI_BASTION_PRIVATE_KEY_DEV }}
+
+jobs:
+  tf-plan:
+    name: 'Terraform Dev Plan'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Authenticate to Huawei Cloud 
+        uses: huaweicloud/auth-action@v1.1.0
+        with:
+          access_key_id: ${{ secrets.ACCESSKEY }}
+          secret_access_key: ${{ secrets.SECRETACCESSKEY }}
+          region: ${{ secrets.HW_REGION_NAME }}
+
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.8
+
+      - name: Test with Checkov
+        id: checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: terraform 
+
+      - name: Capture Checkov Results
+        id: capture-checkov
+        run: |
+          echo "Checkov results: ${{ steps.checkov.outputs.results }}" > checkov_results.txt
+
+      - name: Display Checkov Results
+        id: display-checkov
+        run: cat checkov_results.txt
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.8.2"
+
+      - name: Terraform Format
+        id: fmt
+        run: terraform fmt -check -diff
+        continue-on-error: false
+
+      - name: Terraform Init
+        id: init
+        env:
+          service_account_key: ${{ secrets.GKE_SA_KEY }}
+        run: |
+          touch .env
+          echo "$service_account_key" > gcp_key.json
+          export GOOGLE_APPLICATION_CREDENTIALS=gcp_key.json && terraform init -backend-config=environments/dev/dev.conf
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -json
+
+      - name: Terraform Plan
+        id: plan
+        env: 
+          service_account_key: ${{ secrets.GKE_SA_KEY }}
+          afl_keypair_test:  ${{ secrets.AFL_KEYPAIR_TEST }}
+          continue-on-error: true
+        run: |
+          touch .env
+          echo "$afl_keypair_test" >  afl-keypair-test.pem
+          echo "$service_account_key" > gcp_key.json
+          echo "$service_account_key" > gcp_key.json
+          export GOOGLE_APPLICATION_CREDENTIALS=gcp_key.json && terraform plan -var-file=environments/dev/dev.tfvars  -input=false
+        continue-on-error: false
+
+      - name: Plan output
+        uses: actions/github-script@v5
+        if: github.event_name == 'pull_request'
+        env:
+          PLAN: "terraform\n${{ steps.plan.outputs.stdout }}"
+          VALIDATE: "terraform\n${{ steps.validate.outputs.stdout }}"          
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
+            #### Terraform Initialization ⚙️\`${{ steps.init.outcome }}\`
+            #### Terraform Plan 📖\`${{ steps.plan.outcome }}\`
+            <details><summary>Show Plan</summary>
+            \`\`\`hcl
+            ${process.env.PLAN}
+            \`\`\`
+            </details>
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`, Workflow: \`${{ github.workflow }}\`*`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+
+
+  tf-apply-develop:
+
+    if: github.ref == 'refs/heads/develop'
+    needs: tf-plan
+    name: 'Terraform Apply Huawei Test Environment'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Authenticate Huawei Cloud
+        uses: huaweicloud/auth-action@v1.1.0
+        with:
+          access_key_id: ${{ secrets.HW_ACCESS_KEY }}
+          secret_access_key: ${{ secrets.HW_SECRET_KEY }}
+          region: ${{ secrets.HW_REGION_NAME }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.8.2"
+
+      - name: Terraform init
+        env: 
+          service_account_key: ${{ secrets.GKE_SA_KEY }}
+          afl_keypair_test:  ${{ secrets.AFL_KEYPAIR_TEST }}
+        run: |
+          touch .env
+          echo "$afl_keypair_test" >  afl-keypair-test.pem
+          echo "$service_account_key" > gcp_key.json
+          export GOOGLE_APPLICATION_CREDENTIALS=gcp_key.json && terraform init -backend-config=environments/dev/dev.conf -migrate-state  
+      - name: Terraform apply Test Environment (DEV)
+        env: 
+         service_account_key: ${{ secrets.GKE_SA_KEY }}
+         afl_keypair_test:  ${{ secrets.AFL_KEYPAIR_TEST }}
+        run: |
+          touch .env
+          echo "$service_account_key" > gcp_key.json
+          echo "$afl_keypair_test" >  afl-keypair-test.pem
+          export GOOGLE_APPLICATION_CREDENTIALS=gcp_key.json &&
+          terraform apply -var-file=environments/dev/dev.tfvars --auto-approve  -input=false
