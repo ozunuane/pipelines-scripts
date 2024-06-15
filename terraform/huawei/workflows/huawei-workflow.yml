@@ -1,0 +1,189 @@
+name: Build and Deploy to Huawei Test Environment
+
+# on:
+#   pull_request:
+#     branches:
+#       - develop
+#     types: [closed]
+on: push
+
+
+env:
+  PROJECT_ID: ${{ secrets.HUAWEI_TEST_PROJECT }}
+  REGION_ID: af-south-1
+  CLUSTER_ID: ${{ secrets.HUAWEI_TEST_CBA_CLUSTER_ID }}
+  SWR_ORGANIZATION: afl-dev
+  DEPLOYMENT_NAME: afl-service-9japayoutward-deployment 
+  IMAGE: afl/service-9japayoutward
+  SUBIMAGE: afl/service-9japayoutward-subscriber
+  IMAGE_TAG: $GITHUB_SHA
+  GCP_PROD_SA_KEY: ${{ secrets.GCP_PROD_SA_KEY }}
+  KUBECONFIG: config_noncba.yml
+  CONTEXT: internal
+
+jobs:
+  # start-runner:
+  #   name: Start self-hosted ECS runner
+  #   runs-on: ubuntu-latest
+  #   outputs:
+  #     label: ${{ steps.start-ecs-runner.outputs.label }}
+  #     ecs-instance-id: ${{ steps.start-ecs-runner.outputs.ecs-instance-id }}
+  #   steps:
+  #     - uses: actions/checkout@v2
+  #     - name: Start ECS runner
+  #       id: start-ecs-runner
+  #       uses: messense/huaweicloud-github-runner@main
+  #       with:
+  #         mode: start
+  #         github-token: ${{ secrets.GH_PAT }}
+  #         huawei-cloud-ak: ${{ secrets.HUAWEI_CLOUD_AK }}
+  #         huawei-cloud-sk: ${{ secrets.HUAWEI_CLOUD_SK }}
+  #         project-id: ${{ secrets.PROJECT_ID }}
+  #         availability-zone: ap-southeast-1b
+  #         ecs-image-id: 93b1fc8d-ee4e-4126-950e-8f4404408acc
+  #         ecs-instance-type: kc1.large.2
+  #         vpc-id: ${{ secrets.VPC_ID }}
+  #         subnet-id: ${{ secrets.SUBNET_ID }}
+  #         security-group-id: ${{ secrets.SECURITY_GROUP_ID }}
+
+  setup-build-publish-deploy:
+    name: Setup, Build, Publish, and Deploy
+    runs-on: ubuntu-latest
+    environment: development
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    #replace connectionstrings with staging string
+    - uses: microsoft/variable-substitution@v1 
+      name: Replace with Production Values
+      with:
+          files: 'src/Afl.Service.9jaPay.Outward.Api/appsettings.json, src/Afl.Service.9jaPay.Outward.Subscriber/appsettings.json, **/appsettings.json, **/appsettings.Development.json'
+      env:
+          ConnectionStrings.DbConnectionString: ${{ secrets.CBA_DB_CONNECTION_STRING_DEV_DEPLOYED }}
+          ConnectionStrings.SecondaryDbConnectionString: ${{ secrets.CBA_DB_CONNECTION_STRING_DEV_DEPLOYED }}
+          RedisConfig.Url: ${{ secrets.REDIS_CBA_URL_DEV }}
+          GooglePubSubConfig.ProjectId: ${{ secrets.GKE_PROJECT}}
+          BanksConfig.Providus.UserName: ${{ secrets.PROVIDUS_USERNAME_DEV}}
+          BanksConfig.Providus.Password: ${{ secrets.PROVIDUS_PASSWORD_DEV}}
+          BanksConfig.Providus.DebitAccount: ${{ secrets.PROVIDUS_DEBITACCOUNT_DEV}}
+          BanksConfig.Zenith.UserName: ${{ secrets.ZENITH_USERNAME_DEV}}
+          BanksConfig.Zenith.Password: ${{ secrets.ZENITH_PASSWORD_DEV}}
+          BanksConfig.Zenith.DebitAccount: ${{ secrets.ZENITH_DEBITACCOUNT_DEV}}
+          BanksConfig.Optimus.Username: ${{ secrets.OPTIMUS_USERNAME_DEV}}
+          BanksConfig.Optimus.Password: ${{ secrets.OPTIMUS_PASSWORD_DEV}}
+          BanksConfig.Optimus.DebitAccount: ${{ secrets.OPTIMUS_DEBITACCOUNT_DEV}}
+          BanksConfig.Optimus.TransferUserName: ${{ secrets.OPTIMUS_TRANSFERUSERNAME_DEV}}
+          BanksConfig.Kuda.PrivateKey: ${{ secrets.KUDA_PRIVATE_KEY_DEV}}
+          BanksConfig.Kuda.ClientId: ${{ secrets.KUDA_ClIENT_ID_DEV}}
+          BanksConfig.Kuda.SecretKey: ${{ secrets.KUDA_SECRET_KEY_DEV}}
+          BanksConfig.Kuda.Salt: ${{ secrets.KUDA_SALT_DEV}}
+          BanksConfig.Etranzact.TerminalId: ${{ secrets.ETRANZACT_TERMINAL_ID}}
+          BanksConfig.Etranzact.Pin: ${{ secrets.ETRANZACT_PIN}}
+          BanksConfig.Etranzact.MasterKey: ${{ secrets.ETRANZACT_MASTERKEY}}
+          BanksConfig.Moniepoint.ApiKey: ${{ secrets.MONIEPOINT_APIKEY}}
+          BanksConfig.Moniepoint.SecretKey: ${{ secrets.MONIEPOINT_SECRETKEY}}
+          BanksConfig.Moniepoint.DebitAccount: ${{ secrets.MONIEPOINT_DEBIT_ACCOUNT}}
+          BanksConfig.Wema.Username: ${{ secrets.WEMA_USERNAME_DEV}}
+          BanksConfig.Wema.Password: ${{ secrets.WEMA_PASSWORD_DEV}}
+          BanksConfig.Wema.DebitAccount: ${{ secrets.WEMA_DEBITACCOUNT_DEV}}
+          BanksConfig.Wema.VendorId: ${{ secrets.WEMA_VENDORID_DEV}}
+          BanksConfig.Wema.EncryptionKey: ${{ secrets.WEMA_ENCRYPTION_KEY_DEV}}
+          BanksConfig.Wema.EncryptionIv: ${{ secrets.WEMA_ENCRYPTION_IV_DEV}}
+          BanksConfig.Uba.Username: ${{ secrets.UBA_USERNAME_DEV}}
+          BanksConfig.Uba.Password: ${{ secrets.UBA_PASSWORD_DEV }}
+          BanksConfig.Uba.AccessCode: ${{ secrets.UBA_ACCESS_CODE_DEV }}
+          BanksConfig.Uba.ApplCode: ${{ secrets.UBA_APPL_CODE_DEV }}
+          BanksConfig.Uba.ClientNo: ${{ secrets.UBA_CLIENT_NO_DEV }}
+          BanksConfig.HabariPay.Username: ${{ secrets.HABARIPAY_USERNAME_DEV }}
+          BanksConfig.HabariPay.Password: ${{ secrets.HABARIPAY_PASSWORD_DEV }}
+          BanksConfig.HabariPay.HashKey:  ${{ secrets.HABARIPAY_HASHKEY_DEV}}
+          GooglePubSubConfig.Credentials.project_id: ${{ secrets.GKE_PROJECT}}
+          GooglePubSubConfig.Credentials.private_key_id: ${{ secrets.GCP_DEV_PRIVATE_KEY_ID}}
+          GooglePubSubConfig.Credentials.private_key: ${{ secrets.GCP_DEV_PRIVATE_KEY}}
+          GooglePubSubConfig.Credentials.client_email:  ${{ secrets.GCP_DEV_SA_EMAIL}}
+          GooglePubSubConfig.Credentials.client_id: ${{ secrets.GCP_DEV_CLIENT_ID}}
+          GooglePubSubConfig.Credentials.client_x509_cert_url: ${{ secrets.GCP_DEV_CLIENT_X509_CERT_URL}}
+          GooglePubSubConfig.Credentials.token_uri: https://oauth2.googleapis.com/token
+          GooglePubSubConfig.Credentials.auth_provider_x509_cert_url: https://www.googleapis.com/oauth2/v1/certs
+          GooglePubSubConfig.Credentials.type: "service_account"
+
+    - name: Log in to Huawei Cloud SWR
+      uses: huaweicloud/swr-login@v2.1.0
+      with:
+        access-key-id: ${{ secrets.HUAWEI_ACCESS_KEY }}
+        access-key-secret: ${{ secrets.HUAWEI_SECRET_ACCESS_KEY }}
+        region: ${{ env.REGION_ID }}
+
+    - name: Build, Tag, and Push Image to Huawei Cloud SWR
+      id: push-image
+      env:
+        SWR_REGISTRY: swr.${{ env.REGION_ID }}.myhuaweicloud.com
+        SWR_ORGANIZATION: ${{ env.SWR_ORGANIZATION }}
+        IMAGE_TAG: ${{ github.sha }} 
+        IMAGE: afl/service-9japayoutward
+        SUBIMAGE: afl/service-9japayoutward-subscriber
+      run: |
+          docker build -f src/Afl.Service.9jaPay.Outward.Api/Dockerfile -t $SWR_REGISTRY/$SWR_ORGANIZATION/$IMAGE:$IMAGE_TAG .
+          docker build -f src/Afl.Service.9jaPay.Outward.Subscriber/Dockerfile -t $SWR_REGISTRY/$SWR_ORGANIZATION/$SUBIMAGE:$IMAGE_TAG .
+          docker push $SWR_REGISTRY/$SWR_ORGANIZATION/$IMAGE:$IMAGE_TAG
+          docker push $SWR_REGISTRY/$SWR_ORGANIZATION/$SUBIMAGE:$IMAGE_TAG
+
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y sshpass
+
+    - name: Clear any existing deployment files before any new deployment 
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HUAWEI_BASTION_HOST }}
+        username: ${{ secrets.HUAWEI_BASTION_USERNAME }}
+        password: ${{ secrets.HUAWEI_BASTION_PASSWORD }}
+        port: ${{ secrets.HUAWEI_BASTION_PORT }}
+        script: |
+          rm -rf /tmp/kustomize/Deploy.yaml
+          rm -rf /tmp/kustomize/kustomization.yaml
+          rm -rf /tmp/run-deploy.sh
+          rm -rf /tmp/kubeconfig
+
+
+    - name: Copy kustomize files to bastion
+      env:
+        BASTION_HOST: ${{ secrets.HUAWEI_BASTION_HOST }}
+        BASTION_USER: ${{ secrets.HUAWEI_BASTION_USERNAME }}
+        BASTION_PASSWORD: ${{ secrets.HUAWEI_BASTION_PASSWORD }}
+      run: |
+        sshpass -p "$BASTION_PASSWORD" scp -o StrictHostKeyChecking=no -r ./huawei-dev-deploy $BASTION_USER@$BASTION_HOST:/tmp/kustomize
+    
+    - name: Copy deployment script file to bastion
+      env:
+        BASTION_HOST: ${{ secrets.HUAWEI_BASTION_HOST }}
+        BASTION_USER: ${{ secrets.HUAWEI_BASTION_USERNAME }}
+        BASTION_PASSWORD: ${{ secrets.HUAWEI_BASTION_PASSWORD }}
+      run: |
+        sshpass -p "$BASTION_PASSWORD" scp -o StrictHostKeyChecking=no -r .github/scripts/run-deploy.sh $BASTION_USER@$BASTION_HOST:/tmp/run-deploy.sh
+
+    - name: Run deployment script on Bastion
+      env:
+        SWR_REGISTRY: swr.${{ env.REGION_ID }}.myhuaweicloud.com
+        SWR_ORGANIZATION: ${{ env.SWR_ORGANIZATION }}
+        IMAGE_TAG: ${{ github.sha }} 
+        IMAGE: afl/service-9japayoutward
+        SUBIMAGE: afl/service-9japayoutward-subscriber
+        KUBECONFIG: config_noncba.yml
+        CONTEXT: internal
+        DEPLOYMENT_NAME: afl-service-9japayoutward-deployment
+        GITHUB_SHA: ${{ github.sha }}
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.HUAWEI_BASTION_HOST }}
+        username: ${{ secrets.HUAWEI_BASTION_USERNAME }}
+        password: ${{ secrets.HUAWEI_BASTION_PASSWORD }}
+        port: ${{ secrets.HUAWEI_BASTION_PORT }}
+        envs: SWR_REGISTRY,SWR_ORGANIZATION,IMAGE_TAG,IMAGE,SUBIMAGE,KUBECONFIG,CONTEXT,DEPLOYMENT_NAME,GITHUB_SHA
+        script: |
+          bash -x /tmp/run-deploy.sh
+

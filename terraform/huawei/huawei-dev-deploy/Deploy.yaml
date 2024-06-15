@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: noncba
+  labels:
+    name: noncba
+    istio-injection: enabled
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: afl-service-9japayoutward-deployment
+  namespace: noncba
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: afl-service-9japayoutward
+  template:
+    metadata:
+      labels:
+        app: afl-service-9japayoutward
+    spec:
+      containers:
+      - name: afl-service-9japayoutward
+        image: REGISTRY/PROJECT_ID/IMAGE
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 256m
+          limits:
+            cpu: 256m
+
+      - name: afl-service-9japayoutward-subscriber
+        image: REGISTRY/PROJECT_ID/SUBIMAGE
+        resources:
+          requests:
+            cpu: 200m
+          limits:
+            cpu: 200m
+      imagePullSecrets:
+      - name: registry-secret
+            
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: afl-service-9japayoutward
+  namespace: noncba
+  annotations:   
+    kubernetes.io/elb.class: performance
+    kubernetes.io/elb.autocreate: '{
+      "name": "afl-service-9japayoutward",
+      "type": "public",
+      "bandwidth_name": "cce-bandwidth-afl-9japayoutward",
+      "bandwidth_chargemode": "traffic",
+      "bandwidth_size": 5,
+      "bandwidth_sharetype": "PER",
+      "eip_type": "5_bgp",
+      "available_zone": [ "af-south-1a", "af-south-1b" ],
+      "l4_flavor_name": "L4_flavor.elb.s1.small",
+      "l7_flavor_name": "L7_flavor.elb.s1.small"
+    }'
+spec:
+  type: LoadBalancer
+  ports:      
+    - name: http
+      port: 80
+      targetPort: 80
+  selector:
+    app: afl-service-9japayoutward
