@@ -1,0 +1,231 @@
+name: Build and Deploy to prod Environment
+
+on:
+  pull_request:
+    branches:
+      - master
+    types: [closed]
+
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROD_PROJECT }}
+  GKE_CLUSTER: ${{ secrets.GKE_CLUSTER_CBA_PROD }}    # Add your cluster name here.
+  GKE_ZONE:  ${{ secrets.GCP_ZONE_PROD }}   # Add your cluster zone here.
+  DEPLOYMENT_NAME: afl-cba-customerinfo-deployment # Add your deployment name here.
+  IMAGE: afl/cba-customerinfo
+  SUBIMAGE: afl/cba-customerinfo-subscriber
+  GRPCIMAGE: afl/cba-customerinfo-grpc
+  IMAGE_TAG: $GITHUB_SHA
+  CONTEXT: --current
+  GCP_PROD_SA_KEY: ${{ secrets.GCP_PROD_SA_KEY }}
+
+jobs:
+  migrate_database:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@v1
+        with:
+          dotnet-version: '6.0.x'
+
+      - id: 'auth'
+        uses: 'google-github-actions/auth@v0'
+        with:
+         credentials_json: '${{ secrets.GCP_PROD_SA_KEY }}'
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v0'
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_PROD }}
+
+      - name: Get Cloud SQL Proxy
+        run: |
+          wget https://dl.google.com/cloudsql/cloud_sql_proxy.linux.amd64 -O cloud_sql_proxy
+          chmod +x cloud_sql_proxy
+          sudo mkdir /cloudsql
+          sudo chmod 777 /cloudsql
+      
+      #Temporarily disable
+      # - name: Backup prod database
+      #   run: |
+      #     gcloud sql backups create --instance=${{ secrets.GCP_SQL_CLOUD_INSTANCE_NAME_CBA_PROD }}
+      
+      - name: Get Runner Public IP
+        id: ip
+        uses: haythem/public-ip@v1.3
+
+      - name: Add Runner IP to CloudSQL Authorized Networks
+        run: |
+          echo ${{ steps.ip.outputs.ipv4 }}
+          echo ${{ steps.ip.outputs.ipv6 }}
+          gcloud sql instances patch ${{ secrets.GCP_SQL_CLOUD_INSTANCE_NAME_CBA_PROD }} --assign-ip
+          gcloud sql instances patch ${{ secrets.GCP_SQL_CLOUD_INSTANCE_NAME_CBA_PROD }} --authorized-networks=${{ steps.ip.outputs.ipv4 }}
+
+      - name: Generate .env file
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GCP_PROD_SA_KEY }}
+        run: |
+          touch cred.json
+          echo $GOOGLE_APPLICATION_CREDENTIALS >> cred.json
+          ls
+
+      - name: Install dotnet-ef
+        run: |
+          dotnet tool install --global dotnet-ef --version 7.0.1
+
+      - uses: microsoft/variable-substitution@v1 
+        name: Replace with Production Values
+        with:
+            files: 'src/Afl.CBA.CustomerInfo.Api/appsettings.json, src/Afl.CBA.CustomerInfo.Subscriber/appsettings.json, **/appsettings.json, **/appsettings.Development.json'
+        env:
+            ConnectionStrings.DbConnectionString: ${{ secrets.CBA_DB_CONNECTION_STRING }}
+            ConnectionStrings.SecondaryDbConnectionString: ${{ secrets.CBA_DB_CONNECTION_STRING }}
+            RedisConfig.Url: ${{ secrets.REDIS_CBA_URL_PROD }}
+            KafkaConfig.BootstrapServers: ${{ secrets.KAFKA_BOOSTRAP_SERVER_STAGING }}
+            KafkaConfig.ApiKey: ${{ secrets.KAFKA_API_KEY_STAGING }}
+            KafkaConfig.SecretKey: ${{ secrets.KAFKA_API_SECRET_STAGING }}
+            AuditTrailMsConfig.BaseUrl: http://afl-cba-audittrail
+            AuditTrailMsConfig.GrpcUrl: afl-cba-audittrail:5275
+            GooglePubSubConfig.ProjectId: ${{ secrets.GCP_PROD_PROJECT}}
+            project_id: ${{ secrets.GCP_PROD_PROJECT}}
+            private_key_id: ${{ secrets.GCP_PROD_PRIVATE_KEY_ID}}
+            private_key: ${{ secrets.GCP_PROD_PRIVATE_KEY}}
+            client_email: ${{ secrets.GCP_PROD_SA_EMAIL}}
+            client_id: ${{ secrets.GCP_PROD_CLIENT_ID}}
+            client_x509_cert_url: ${{ secrets.GCP_PROD_CLIENT_X509_CERT_URL}}
+            
+
+      - name: Run Migration
+        run: |
+          ./cloud_sql_proxy -dir=/cloudsql -credential_file=cred.json  -instances=${{ secrets.GCP_SQL_CLOUD_CONNECTION_CBA_PROD }}=tcp:5432 & cd src/Afl.CBA.CustomerInfo.Migrations && dotnet ef database update
+
+      - name: Clear Authorized Networks and Remove Public IP
+        run: |
+          gcloud sql instances patch ${{ secrets.GCP_SQL_CLOUD_INSTANCE_NAME_CBA_PROD }} --clear-authorized-networks
+          gcloud sql instances patch ${{ secrets.GCP_SQL_CLOUD_INSTANCE_NAME_CBA_PROD }} --no-assign-ip
+          gcloud sql instances patch ${{ secrets.GCP_SQL_CLOUD_INSTANCE_NAME_CBA_PROD_REPLICA }} --no-assign-ip
+
+  
+  setup-build-publish-deploy:
+    if: github.event.pull_request.merged == true
+    name: Setup, Build, Publish, and Deploy
+    needs: migrate_database
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    #replace connectionstrings with production string
+    - uses: microsoft/variable-substitution@v1 
+      name: Replace with Production Values
+      with:
+          files: 'src/Afl.CBA.CustomerInfo.Api/appsettings.json, src/Afl.CBA.CustomerInfo.Subscriber/appsettings.json, **/appsettings.json, **/appsettings.Development.json'
+      env:
+          ConnectionStrings.DbConnectionString: ${{ secrets.CBA_DB_CONNECTION_STRING_PROD }}
+          ConnectionStrings.SecondaryDbConnectionString: ${{ secrets.CBA_DB_CONNECTION_STRING_PROD }}
+          RedisConfig.Url: ${{ secrets.REDIS_CBA_URL_PROD }}
+          KafkaConfig.BootstrapServers: ${{ secrets.KAFKA_BOOSTRAP_SERVER_STAGING }}
+          KafkaConfig.ApiKey: ${{ secrets.KAFKA_API_KEY_STAGING }}
+          KafkaConfig.SecretKey: ${{ secrets.KAFKA_API_SECRET_STAGING }}
+          AuditTrailMsConfig.BaseUrl: http://afl-cba-audittrail
+          AuditTrailMsConfig.GrpcUrl: http://afl-cba-audittrail:5275
+          GooglePubSubConfig.ProjectId: ${{ secrets.GCP_PROD_PROJECT}}
+          project_id: ${{ secrets.GCP_PROD_PROJECT}}
+          private_key_id: ${{ secrets.GCP_PROD_PRIVATE_KEY_ID}}
+          private_key: ${{ secrets.GCP_PROD_PRIVATE_KEY}}
+          client_email: ${{ secrets.GCP_PROD_SA_EMAIL}}
+          client_id: ${{ secrets.GCP_PROD_CLIENT_ID}}
+          client_x509_cert_url: ${{ secrets.GCP_PROD_CLIENT_X509_CERT_URL}}
+          GooglePubSubConfig.Credentials.project_id: ${{ secrets.GCP_PROD_PROJECT}}
+          GooglePubSubConfig.Credentials.private_key_id: ${{ secrets.GCP_PROD_PRIVATE_KEY_ID}}
+          GooglePubSubConfig.Credentials.private_key: ${{ secrets.GCP_PROD_PRIVATE_KEY}}
+          GooglePubSubConfig.Credentials.client_email: ${{ secrets.GCP_PROD_SA_EMAIL}}
+          GooglePubSubConfig.Credentials.client_id: ${{ secrets.GCP_PROD_CLIENT_ID}}
+          GooglePubSubConfig.Credentials.client_x509_cert_url: ${{ secrets.GCP_PROD_CLIENT_X509_CERT_URL}}
+          GooglePubSubConfig.auth_provider_x509_cert_url: https://accounts.google.com/o/oauth2/auth
+          GooglePubSubConfig.Credentials.token_uri: https://oauth2.googleapis.com/token
+          GooglePubSubConfig.Credentials.auth_provider_x509_cert_url: https://www.googleapis.com/oauth2/v1/certs
+          GooglePubSubConfig.Credentials.type: "service_account"
+
+    # Setup gcloud CLI
+    - uses: google-github-actions/setup-gcloud@94337306dda8180d967a56932ceb4ddcf01edae7
+      with:
+        service_account_key: ${{ secrets.GCP_PROD_SA_KEY }}
+        project_id: ${{ secrets.GCP_PROJECT_PROD }}
+
+    # Configure Docker to use the gcloud command-line tool as a credential
+    # helper for authentication
+    - run: |-
+        gcloud --quiet auth configure-docker
+
+    # # Get the GKE credentials so we can deploy to the cluster
+    # - uses: google-github-actions/get-gke-credentials@fb08709ba27618c31c09e014e1d8364b02e5042e
+    #   with:
+    #     cluster_name: ${{ env.GKE_CLUSTER }}
+    #     location: ${{ env.GKE_ZONE }}
+    #     credentials: ${{ secrets.GCP_PROD_SA_KEY }}
+
+    # Build the Docker images
+    - name: Build main image
+      run: |-
+        docker build -f src/Afl.CBA.CustomerInfo.Api/Dockerfile\
+          --tag "gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA" \
+          --build-arg GITHUB_SHA="$GITHUB_SHA" \
+          --build-arg GITHUB_REF="$GITHUB_REF" \
+          .
+    - name: Build subscriber image
+      run: |-
+        docker build -f src/Afl.CBA.CustomerInfo.Subscriber/Dockerfile\
+          --tag "gcr.io/$PROJECT_ID/$SUBIMAGE:$GITHUB_SHA" \
+          --build-arg GITHUB_SHA="$GITHUB_SHA" \
+          --build-arg GITHUB_REF="$GITHUB_REF" \
+          .
+    - name: Build grpc api image
+      run: |-
+        docker build -f src/Afl.CBA.CustomerInfo.GrpcApi/Dockerfile\
+          --tag "gcr.io/$PROJECT_ID/$GRPCIMAGE:$GITHUB_SHA" \
+          --build-arg GITHUB_SHA="$GITHUB_SHA" \
+          --build-arg GITHUB_REF="$GITHUB_REF" \
+          .
+
+
+    # Push the Docker image to Google Container Registry
+    - name: Publish
+      run: |-
+        docker push "gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA"
+        docker push "gcr.io/$PROJECT_ID/$SUBIMAGE:$GITHUB_SHA"
+        docker push "gcr.io/$PROJECT_ID/$GRPCIMAGE:$GITHUB_SHA"
+
+
+    # Set up kustomize
+    - name: Set up Kustomize
+      run: |-
+        cd prod-deploy
+        curl -sfLo kustomize https://github.com/kubernetes-sigs/kustomize/releases/download/v3.1.0/kustomize_3.1.0_linux_amd64
+        chmod u+x ./kustomize
+
+
+    # Deploy the Docker image to the GKE cluster
+    - name: Deploy
+      run: |-
+        cd prod-deploy
+        echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+        curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
+        sudo apt update
+        sudo apt-get install google-cloud-sdk-gke-gcloud-auth-plugin
+        echo "##vso[task.setvariable variable=USE_GKE_GCLOUD_AUTH_PLUGIN]True"
+        export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+        sudo apt-get update && sudo apt-get --only-upgrade install kubectl google-cloud-sdk-skaffold google-cloud-sdk-gke-gcloud-auth-plugin google-cloud-sdk-kpt google-cloud-sdk-app-engine-go google-cloud-sdk-datalab google-cloud-sdk-nomos google-cloud-sdk-kubectl-oidc google-cloud-sdk-anthos-auth google-cloud-sdk-minikube google-cloud-sdk-app-engine-grpc google-cloud-sdk-terraform-tools google-cloud-sdk-config-connector google-cloud-sdk-log-streaming google-cloud-sdk-firestore-emulator google-cloud-sdk-app-engine-java google-cloud-sdk-cbt google-cloud-sdk-harbourbridge google-cloud-sdk-local-extract google-cloud-sdk-cloud-build-local google-cloud-sdk-cloud-run-proxy google-cloud-sdk-spanner-emulator google-cloud-sdk-app-engine-python-extras google-cloud-sdk-bigtable-emulator google-cloud-sdk google-cloud-sdk-pubsub-emulator google-cloud-sdk-datastore-emulator google-cloud-sdk-app-engine-python google-cloud-sdk-package-go-module
+        source ~/.bashrc
+        gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE --project $PROJECT_ID
+        gcloud compute ssh naijapay-bastion --project $PROJECT_ID --zone=europe-west2-a --  -L 8888:localhost:8888 -N -q -f
+        export HTTPS_PROXY=localhost:8888
+        ./kustomize edit set image gcr.io/PROJECT_ID/IMAGE=gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA
+        ./kustomize edit set image gcr.io/PROJECT_ID/SUBIMAGE=gcr.io/$PROJECT_ID/$SUBIMAGE:$GITHUB_SHA
+        ./kustomize edit set image gcr.io/PROJECT_ID/GRPCIMAGE=gcr.io/$PROJECT_ID/$GRPCIMAGE:$GITHUB_SHA
+        kubectl apply -k .
+        kubectl rollout status deployment/${{env.DEPLOYMENT_NAME}} --namespace cba
+        kubectl get services -o wide
