@@ -1,48 +1,48 @@
-# FROM mcr.microsoft.com/dotnet/sdk:6.0 AS base
+FROM mcr.microsoft.com/dotnet/sdk:6.0 AS base
 
-# EXPOSE 80
-# EXPOSE 443
+EXPOSE 80
+EXPOSE 443
 
-# COPY ["src/Afl.CBA.CustomerInfo.Api/", "src/Afl.CBA.CustomerInfo.Api/"]
-# COPY ["src/Afl.CBA.CustomerInfo.Services/", "src/Afl.CBA.CustomerInfo.Services/"]
-# COPY ["src/Afl.CBA.CustomerInfo.Data/", "src/Afl.CBA.CustomerInfo.Data/"]
-# COPY ["src/Afl.CBA.CustomerInfo.Models/", "src/Afl.CBA.CustomerInfo.Models/"]
-# COPY ["src/Afl.CBA.CustomerInfo.Core/", "src/Afl.CBA.CustomerInfo.Core/"]
+COPY ["src/Afl.CBA.CustomerInfo.Api/", "src/Afl.CBA.CustomerInfo.Api/"]
+COPY ["src/Afl.CBA.CustomerInfo.Services/", "src/Afl.CBA.CustomerInfo.Services/"]
+COPY ["src/Afl.CBA.CustomerInfo.Data/", "src/Afl.CBA.CustomerInfo.Data/"]
+COPY ["src/Afl.CBA.CustomerInfo.Models/", "src/Afl.CBA.CustomerInfo.Models/"]
+COPY ["src/Afl.CBA.CustomerInfo.Core/", "src/Afl.CBA.CustomerInfo.Core/"]
 
-# RUN dotnet restore "src/Afl.CBA.CustomerInfo.Api/Afl.CBA.CustomerInfo.Api.csproj"
+RUN dotnet restore "src/Afl.CBA.CustomerInfo.Api/Afl.CBA.CustomerInfo.Api.csproj"
 
-# WORKDIR "src/Afl.CBA.CustomerInfo.Api"
+WORKDIR "src/Afl.CBA.CustomerInfo.Api"
 
-# RUN dotnet publish -c Release -o /app/publish
+RUN dotnet publish -c Release -o /app/publish
 
-# FROM mcr.microsoft.com/dotnet/aspnet:6.0
+FROM mcr.microsoft.com/dotnet/aspnet:6.0
 
-# WORKDIR /app
-# COPY --from=base /app/publish .
-# ENTRYPOINT ["dotnet", "Afl.CBA.CustomerInfo.Api.dll"]
-
-
+WORKDIR /app
+COPY --from=base /app/publish .
+ENTRYPOINT ["dotnet", "Afl.CBA.CustomerInfo.Api.dll"]
 
 
-# ################## GRPC ###############
-# FROM mcr.microsoft.com/dotnet/sdk:6.0 AS base
 
-# EXPOSE 5075
 
-# COPY ["src/Afl.CBA.CustomerInfo.GrpcApi/", "src/Afl.CBA.CustomerInfo.GrpcApi/"]
-# COPY ["src/Afl.CBA.CustomerInfo.Services/", "src/Afl.CBA.CustomerInfo.Services/"]
-# COPY ["src/Afl.CBA.CustomerInfo.Data/", "src/Afl.CBA.CustomerInfo.Data/"]
-# COPY ["src/Afl.CBA.CustomerInfo.Models/", "src/Afl.CBA.CustomerInfo.Models/"]
-# COPY ["src/Afl.CBA.CustomerInfo.Core/", "src/Afl.CBA.CustomerInfo.Core/"]
+################## GRPC ###############
+FROM mcr.microsoft.com/dotnet/sdk:6.0 AS base
 
-# RUN dotnet restore "src/Afl.CBA.CustomerInfo.GrpcApi/Afl.CBA.CustomerInfo.GrpcApi.csproj"
+EXPOSE 5075
 
-# WORKDIR "src/Afl.CBA.CustomerInfo.GrpcApi"
+COPY ["src/Afl.CBA.CustomerInfo.GrpcApi/", "src/Afl.CBA.CustomerInfo.GrpcApi/"]
+COPY ["src/Afl.CBA.CustomerInfo.Services/", "src/Afl.CBA.CustomerInfo.Services/"]
+COPY ["src/Afl.CBA.CustomerInfo.Data/", "src/Afl.CBA.CustomerInfo.Data/"]
+COPY ["src/Afl.CBA.CustomerInfo.Models/", "src/Afl.CBA.CustomerInfo.Models/"]
+COPY ["src/Afl.CBA.CustomerInfo.Core/", "src/Afl.CBA.CustomerInfo.Core/"]
 
-# RUN dotnet publish -c Release -o /app/publish
+RUN dotnet restore "src/Afl.CBA.CustomerInfo.GrpcApi/Afl.CBA.CustomerInfo.GrpcApi.csproj"
 
-# FROM mcr.microsoft.com/dotnet/aspnet:6.0
+WORKDIR "src/Afl.CBA.CustomerInfo.GrpcApi"
 
-# WORKDIR /app
-# COPY --from=base /app/publish .
-# ENTRYPOINT ["dotnet", "Afl.CBA.CustomerInfo.GrpcApi.dll"]
+RUN dotnet publish -c Release -o /app/publish
+
+FROM mcr.microsoft.com/dotnet/aspnet:6.0
+
+WORKDIR /app
+COPY --from=base /app/publish .
+ENTRYPOINT ["dotnet", "Afl.CBA.CustomerInfo.GrpcApi.dll"]
