@@ -1,0 +1,5 @@
+This is a Terraform module for managing DNS records in the hosted zone "rank.africa" in Amazon Route 53. The source of the module is the "route53" directory in the same location as this module definition.
+
+This module is used to automate the creation, modification and deletion of DNS records in the "rank.africa" hosted zone in Amazon Route 53, using Terraform. The Terraform code in this module can be executed to make changes to the hosted zone, such as adding, modifying or deleting records.
+
+Once the module is executed, Terraform will manage the state of the hosted zone and its records, ensuring that the desired state defined in the Terraform code is reflected in the actual state of the hosted zone in Amazon Route 53. This helps ensure that the hosted zone is always in the desired state, even after changes are made or the environment is recreated.

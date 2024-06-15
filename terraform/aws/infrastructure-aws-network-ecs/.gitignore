@@ -1,0 +1,47 @@
+access.sh
+global
+**/.terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.terraform.lock.hcl
+access.sh
+.env
+
+
+# Local .terraform directories
+**/.terraform/*
+
+.tfstate files
+*.tfstate
+*.tfstate.*
+terraform.tfstate.backup
+terraform.tfstate
+terraform.json
+.terraform
+.terraform.lock.hcl
+
+
+# Crash log files
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.idea
+*.iml
+*.
+inspired-victor-344313-5736145f93f2.json
+gcp_key.json
+*.json
+update_ssm.sh
+afl-keypair-test.pem
+bastion-keypair.pem

@@ -1,0 +1,88 @@
+definitions:
+
+  services:
+   
+    terraform-init: &terraform-init
+      name: Terraform Initialize Backend
+      image: henro4niger/terraform-aws:latest
+      oidc: true
+      script:
+        - export AWS_REGION=us-west-1
+        - aws sts assume-role-with-web-identity --role-arn $AWS_ROLE_ARN --role-session-name build-session --web-identity-token "$BITBUCKET_STEP_OIDC_TOKEN" --duration-seconds 1000
+        - export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token 
+        - echo $BITBUCKET_STEP_OIDC_TOKEN
+        - echo $BITBUCKET_STEP_OIDC_TOKEN > $(pwd)/web-identity-token
+        - terraform fmt -check -diff
+        - terraform init -backend-config=env/$WORKSPACE/$WORKSPACE.conf -migrate-state
+
+    terraform-fmt: &terraform-validate
+      name: Terraform Format Check and Validation
+      image: henro4niger/terraform-aws:latest
+      oidc: true
+      script:
+        - export AWS_REGION=us-west-1
+        - aws sts assume-role-with-web-identity --role-arn $AWS_ROLE_ARN --role-session-name build-session --web-identity-token "$BITBUCKET_STEP_OIDC_TOKEN" --duration-seconds 1000
+        - export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token 
+        - echo $BITBUCKET_STEP_OIDC_TOKEN
+        - echo $BITBUCKET_STEP_OIDC_TOKEN > $(pwd)/web-identity-token
+        - terraform init -backend-config=env/$WORKSPACE/$WORKSPACE.conf -migrate-state
+        - terraform validate -json
+        - echo "Format Check Passed and Code Validated Succesfully"
+
+    checkov: &checkov
+      name: Checkov IAC Scanner
+      image: bridgecrew/checkov:latest
+      entrypoint:
+        - '/usr/bin/env'
+        - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+      script:
+        - checkov -d .
+
+    terraform-plan: &terraform-plan
+      name: Display configuration parameters and planned infrastructure change
+      image: henro4niger/terraform-aws:latest
+      oidc: true
+      script:
+        - export AWS_REGION=us-west-1
+        - aws sts assume-role-with-web-identity --role-arn $AWS_ROLE_ARN --role-session-name build-session --web-identity-token "$BITBUCKET_STEP_OIDC_TOKEN" --duration-seconds 1000
+        - export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token 
+        - echo $BITBUCKET_STEP_OIDC_TOKEN
+        - echo $BITBUCKET_STEP_OIDC_TOKEN > $(pwd)/web-identity-token
+        - terraform init -backend-config=env/$WORKSPACE/$WORKSPACE.conf -migrate-state
+        - terraform workspace select $WORKSPACE
+        - terraform plan -var-file=env/$WORKSPACE/$WORKSPACE.tfvars
+
+
+
+    terraform-apply: &terraform-apply
+      name: Apply configuration to infrastructure
+      image: henro4niger/terraform-aws:latest
+      oidc: true
+      script:
+        - export AWS_REGION=us-west-1
+        - aws sts assume-role-with-web-identity --role-arn $AWS_ROLE_ARN --role-session-name build-session --web-identity-token "$BITBUCKET_STEP_OIDC_TOKEN" --duration-seconds 1000
+        - export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token 
+        - echo $BITBUCKET_STEP_OIDC_TOKEN
+        - echo $BITBUCKET_STEP_OIDC_TOKEN > $(pwd)/web-identity-token
+        - terraform init -backend-config=env/$WORKSPACE/$WORKSPACE.conf -migrate-state
+        - terraform workspace select $WORKSPACE
+        - terraform apply -var-file=env/$WORKSPACE/$WORKSPACE.tfvars
+
+
+pipelines:
+  default:
+    - step: *terraform-init
+    - step: *terraform-validate
+    - step: *checkov
+
+  branches:
+    plan:
+      - step: *terraform-init
+      - step: *terraform-validate
+      # - step: *terraform-plan
+      # - step: *checkov
+
+    main:
+      - step: *terraform-init
+      - step: *terraform-plan
+      - step: *terraform-apply
