@@ -1,0 +1,153 @@
+Point via workspace
+$ECR_REPO_NAME = $ENVIRONMENT
+$CLUSTER_NAME  = $ENVIRONMENT
+
+
+
+#pipeline start
+image: node:18
+options:
+  docker: true
+
+definitions:
+
+    script: &commonExportsAndAuth
+            export ECR_REPO_NAME="tellering-wallet-svc";
+            export CLUSTER_NAME=$CLUSTER_NAME
+            export SERVICE_NAME=$SERVICE_NAME
+            export REPO_URL = "646245671754.dkr.ecr.${REGION}.amazonaws.com"
+            export COMMIT_HASH=$(echo $BITBUCKET_COMMIT | cut -c 1-7);
+            export REGION="us-east-1";
+            export TASK_DEFINITION_NAME="service" 
+            export CLUSTER_NAME="staging-cluster"
+            export SERVICE_NAME="tellering-wallet-staging" 
+            export REPO_NAME=$BITBUCKET_BRANCH
+            export BUILD_ID=$BITBUCKET_BRANCH-$COMMIT_HASH;
+            aws sts assume-role-with-web-identity --role-arn "$AWS_ROLE_ARN" --role-session-name "build-session" --web-identity-token "$BITBUCKET_STEP_OIDC_TOKEN" --duration-seconds 1000;
+            echo $BITBUCKET_STEP_OIDC_TOKEN;
+            export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token;
+            echo $BITBUCKET_STEP_OIDC_TOKEN > $(pwd)/web-identity-token;
+            cat $(pwd)/web-identity-token
+  
+sonar-scan: &sonarqube
+      name: CI - Sonar Scan
+      image: node:14
+      oidc: true
+      services:
+        - docker
+      script: 
+        - npm install
+        - npm run build
+        - npm run test  || true  
+        - apt-get update && apt-get install -y curl unzip 
+        - curl --create-dirs -sSLo ~/.sonarscanner/sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION.zip
+        - unzip ~/.sonarscanner/sonar-scanner.zip -d ~/.sonarscanner/
+        - export PATH=$PATH:~/.sonarscanner/sonar-scanner-$SONAR_SCANNER_VERSION/bin
+        - export REPO_NAME=$BITBUCKET_REPO_SLUG
+        - sonar-scanner 
+          -Dsonar.projectKey=$REPO_NAME  
+          -Dsonar.host.url=$SONAR_HOST_URL 
+          -Dsonar.login=$SONAR_LOGIN
+          -Dsonar.language=ts
+          -Dsonar.sources=src 
+          -Dsonar.tests=test 
+          -Dsonar.typescript.lcov.reportPaths=coverage/lcov.info 
+         - echo "Sonar Scan Complete ->> See https://sonarqube.rank.africa/dashboard?id=$REPO_NAME"
+
+
+
+build-image: &build-image
+    name: CI - Docker Build Image
+    image: tstrohmeier/awscli:3.8.3
+    oidc: true
+    caches:
+      - docker
+    services:
+      - docker
+    script:
+      - git submodule update --init --recursive
+      - cd ./proto
+      - git checkout dev
+      - git pull
+      - cd ..
+      - *commonExportsAndAuth
+      - aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin 646245671754.dkr.ecr.$REGION.amazonaws.com
+      - aws ecr describe-repositories --region $REGION --repository-names $ECR_REPO_NAME || aws ecr create-repository --region $REGION --repository-name $ECR_REPO_NAME --image-scanning-configuration scanOnPush=true
+      - docker build -t $ECR_REPO_NAME .
+  
+
+
+push-image: &push-image
+    name: CI - Docker Build & Push Image
+    image: tstrohmeier/awscli:3.8.3
+    oidc: true
+    caches:
+      - docker
+    services:
+      - docker
+    script:
+      - git submodule update --init --recursive
+      - cd ./proto
+      - git checkout dev
+      - git pull
+      - cd ..
+      - *commonExportsAndAuth
+      - aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin 646245671754.dkr.ecr.$REGION.amazonaws.com
+      - aws ecr describe-repositories --region $REGION --repository-names $ECR_REPO_NAME || aws ecr create-repository --region $REGION --repository-name $ECR_REPO_NAME --image-scanning-configuration scanOnPush=true
+      - docker build -t $ECR_REPO_NAME .
+      - docker tag $ECR_REPO_NAME:latest 646245671754.dkr.ecr.$REGION.amazonaws.com/$ECR_REPO_NAME:$BUILD_ID
+      - docker tag $ECR_REPO_NAME:latest 646245671754.dkr.ecr.$REGION.amazonaws.com/$ECR_REPO_NAME:staging
+      - docker push 646245671754.dkr.ecr.$REGION.amazonaws.com/$ECR_REPO_NAME:$BUILD_ID
+      - docker push 646245671754.dkr.ecr.$REGION.amazonaws.com/$ECR_REPO_NAME:staging
+
+        
+    deploy-to-ecs: &deploy-to-ecs
+      name: CD - ECS Deploy STAGING
+      image: tstrohmeier/awscli:3.8.3
+      oidc: true
+      caches:
+        - docker
+      services:
+        - docker
+      script:
+        - *commonExportsAndAuth
+        - export NEW_IMAGE=${REPO_URL}/${ECR_REPO_NAME}:${BUILD_ID}
+        - pip install ecs-deploy
+        - ecs deploy $CLUSTER_NAME $SERVICE_NAME -t $BUILD_ID --region $REGION --timeout 700 --no-deregister --rollback
+        - echo "done"
+
+
+resource "null_resource" "update-service" {
+  triggers = {
+    arn = module.mongo-task-definition.arn
+  }
+
+  provisioner "local-exec" {
+    command = "aws ecs update-service --cluster ${aws_ecs_service.mongo.cluster} --service ${aws_ecs_service.mongo.name} --task-definition ${module.mongo-task-definition.arn} --force-new-deployment"
+  }
+}
+
+pipelines:
+
+  branches:
+    sonarqube:
+      - step: *sonarqube
+
+    tool-pipeline:
+      - step: *push-image
+
+    dev:
+      - step: *sonarqube
+      - step: *build-image
+      - step: *deploy-to-ecs-dev
+
+
+      
+    Production:
+      - step: *push-image
+      - step: *deploy-to-ecs-staging
+'=
+    Control:
+      - step: *push-image
+      - step: *deploy-to-ecs-control
+	
